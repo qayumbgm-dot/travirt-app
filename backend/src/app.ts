@@ -73,8 +73,16 @@ export const buildApp = async (): Promise<FastifyInstance> => {
   });
 
   // ── CORS ──────────────────────────────────────────────────────────────────
+  const allowedOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim());
   await app.register(cors, {
-    origin: env.CORS_ORIGIN,
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // non-browser / server-to-server
+      const allowed =
+        allowedOrigins.includes(origin) ||
+        /^https:\/\/travirt-[\w-]+-[\w-]+-projects\.vercel\.app$/.test(origin) ||
+        /^https:\/\/travirt-[\w-]+\.vercel\.app$/.test(origin);
+      cb(allowed ? null : new Error('Not allowed by CORS'), allowed);
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
   });

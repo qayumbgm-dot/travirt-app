@@ -12,7 +12,7 @@ interface VitalPayload {
   rating: Rating;
 }
 
-const ENDPOINT = `${import.meta.env.VITE_API_URL ?? 'http://localhost:3001'}/api/analytics/vitals`;
+const ENDPOINT = `${import.meta.env.VITE_API_URL ?? 'http://localhost:3001/api'}/analytics/vitals`;
 
 const THRESHOLDS: Record<VitalName, [number, number]> = {
   CLS:  [0.1,   0.25],

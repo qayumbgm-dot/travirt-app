@@ -34,6 +34,7 @@ interface PortfolioContextType {
     marketStatus: MarketStatus;
     loading: boolean;
     sessionPnl: number;
+    equityHistory: { time: number; value: number }[];
     addInstruments: (stocks: Stock[]) => void;
     addInr: (amount: number) => void;
     buyNfino: (inrAmount: number) => boolean;
@@ -132,6 +133,7 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
     const warnedDrawdownRef = useRef(false);
     const sessionInitializedRef = useRef(false);
     const alertsRef = useRef<Alert[]>([]);
+    const [equityHistory, setEquityHistory] = useState<{ time: number; value: number }[]>([]);
 
     const [sessionStartBalance, setSessionStartBalance] = useState<number>(() => {
         const today = getTodayKey();
@@ -301,6 +303,9 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
             setSessionStartBalance(snap);
         }
         sessionInitializedRef.current = true;
+        // Seed the equity curve with the session-start value
+        const snap = portfolio.virtualBalance + portfolio.totalCurrentValue;
+        setEquityHistory([{ time: Date.now(), value: snap }]);
     }, [loading, marketLoading, portfolio.positions.length, portfolio.virtualBalance, portfolio.totalCurrentValue]);
 
     // ── Alert evaluation — fires on every market-data tick ───────────────────
@@ -364,6 +369,12 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
             const existingPosition = portfolio.positions.find((p) => p.symbol === order.symbol && p.exchange === stock.exchange);
             if (!existingPosition || existingPosition.quantity < order.quantity) return false;
         }
+
+        // Record equity snapshot before the trade alters balances
+        setEquityHistory(prev => [
+            ...prev,
+            { time: Date.now(), value: portfolio.virtualBalance + portfolio.totalCurrentValue },
+        ]);
 
         // Optimistic local update
         const optimisticId = `ord_${Date.now()}`;
@@ -595,7 +606,7 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
 
     return (
         <PortfolioContext.Provider value={{
-            portfolio, riskEngine, sessionPnl, executeTrade, executeBracketOrder, createGTT, deleteGTT,
+            portfolio, riskEngine, sessionPnl, equityHistory, executeTrade, executeBracketOrder, createGTT, deleteGTT,
             createAlert, deleteAlert, getStock, marketData, marketStatus,
             loading: loading || marketLoading, addInstruments, addInr, buyNfino, convertNfinoToVirtual,
             claimDailyBonus, addReward,

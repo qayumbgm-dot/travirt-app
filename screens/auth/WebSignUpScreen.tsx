@@ -2,8 +2,8 @@
 import React, { useState } from 'react';
 import Logo from '../../components/auth/Logo';
 import { useToast } from '../../contexts/ToastContext';
-import { authApi } from '../../api/auth.api';
-import { referralApi } from '../../api/referral.api';
+import { authApi } from '../../apiClient/auth.api';
+import { referralApi } from '../../apiClient/referral.api';
 
 interface WebSignUpScreenProps {
     onLoginSuccess: (userId: string) => void;

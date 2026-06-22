@@ -11,8 +11,9 @@ const schema = z.object({
   REFRESH_TOKEN_EXPIRES_DAYS: z.string().default('30').transform(Number),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   GEMINI_API_KEY: z.string().optional(),
-  ALICE_USER_ID: z.string().optional(),
-  ALICE_API_KEY: z.string().optional(),
+  ALICE_USER_ID:       z.string().optional(),
+  ALICE_API_KEY:       z.string().optional(),
+  ALICE_ACCESS_TOKEN:  z.string().optional(),
   // Public frontend URL used in email links; falls back to CORS_ORIGIN in dev
   FRONTEND_URL: z.string().optional(),
   // Stripe — optional; payments are disabled when absent

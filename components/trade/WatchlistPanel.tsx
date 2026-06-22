@@ -7,7 +7,7 @@ import { usePortfolio } from '../../contexts/PortfolioContext';
 import { useToast } from '../../contexts/ToastContext';
 import { MoreOptionsMenu } from './MoreOptionsMenu';
 import { formatCurrency, getInstrumentKey, parseInstrumentKey } from '../../utils/formatters';
-import { instrumentsApi, instrumentResultToStock } from '../../api/instruments.api';
+import { instrumentsApi, instrumentResultToStock } from '../../apiClient/instruments.api';
 
 // Modular Imports
 import Tooltip from '../common/Tooltip';

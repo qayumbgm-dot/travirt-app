@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { authApi } from '../../api/auth.api';
+import { authApi } from '../../apiClient/auth.api';
 import { useToast } from '../../contexts/ToastContext';
 
 interface WebTfaScreenProps {

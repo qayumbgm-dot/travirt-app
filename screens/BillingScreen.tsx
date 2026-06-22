@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { billingApi, BillingStatus, PlanCatalogue } from '../api/billing.api';
+import { billingApi, BillingStatus, PlanCatalogue } from '../apiClient/billing.api';
 
 const fmt = (paise: number) =>
   paise === 0 ? 'Free' : `₹${(paise / 100).toLocaleString('en-IN')}/mo`;

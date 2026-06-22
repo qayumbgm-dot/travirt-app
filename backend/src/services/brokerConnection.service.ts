@@ -1,5 +1,6 @@
 import { pool } from '../database/pool';
 import { encryptApiKey, decryptApiKey, placeAliceOrder, AliceOrderRequest } from '../integrations/aliceBlue';
+import { getInstrumentBySymbol } from './instrumentMaster.service';
 import type { TradeRequest } from './trade.service';
 
 interface BrokerConnection {
@@ -88,17 +89,22 @@ export const routeToBroker = async (
     return;
   }
 
+  // Resolve the numeric instrumentId (Alice Blue token) from the instruments table
+  const instrument = await getInstrumentBySymbol(trade.symbol, trade.exchange).catch(() => null);
+  const instrumentId = instrument?.token ?? trade.symbol;
+
   const req: AliceOrderRequest = {
     brokerUserId:    broker_user_id,
     bearerToken:     apiKey,
     symbol:          trade.symbol,
+    instrumentId,
     exchange:        trade.exchange,
     transactionType: trade.transactionType,
     orderType:       trade.orderType,
     quantity:        trade.quantity,
     price:           trade.price,
     triggerPrice:    trade.triggerPrice,
-    productType:     trade.variety === 'CNC' ? 'CNC' : 'MIS',
+    productType:     trade.variety === 'CNC' ? 'LONGTERM' : 'INTRADAY',
   };
 
   const result = await placeAliceOrder(req);

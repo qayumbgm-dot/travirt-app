@@ -4,9 +4,9 @@ import { PortfolioState, Order, TransactionType, OrderType, OrderVariety, Stock,
 import { useMarketData } from '../hooks/useMarketData';
 import { formatCurrency } from '../utils/formatters';
 import { INITIAL_INR_BALANCE, INITIAL_NXO_BALANCE, INITIAL_VIRTUAL_BALANCE } from '../constants';
-import { portfolioApi, ApiPortfolio } from '../api/portfolio.api';
-import { tradeApi } from '../api/trade.api';
-import { fundsApi } from '../api/funds.api';
+import { portfolioApi, ApiPortfolio } from '../apiClient/portfolio.api';
+import { tradeApi } from '../apiClient/trade.api';
+import { fundsApi } from '../apiClient/funds.api';
 import { useToast } from './ToastContext';
 
 interface PortfolioContextType {

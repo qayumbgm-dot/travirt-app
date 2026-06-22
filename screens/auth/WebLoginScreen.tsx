@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import Logo from '../../components/auth/Logo';
 import { useToast } from '../../contexts/ToastContext';
-import { authApi } from '../../api/auth.api';
+import { authApi } from '../../apiClient/auth.api';
 
 interface WebLoginScreenProps {
     onLoginDirect: (userId: string) => void;

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { billingApi, BillingStatus, PlanFeatures } from '../api/billing.api';
+import { billingApi, BillingStatus, PlanFeatures } from '../apiClient/billing.api';
 
 interface SubscriptionContextValue {
   plan: BillingStatus | null;

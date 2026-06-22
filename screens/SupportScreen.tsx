@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useToast } from '../contexts/ToastContext';
-import { supportApi } from '../api/support.api';
+import { supportApi } from '../apiClient/support.api';
 
 const FAQS: { q: string; a: string }[] = [
     {

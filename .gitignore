@@ -41,3 +41,5 @@ backups/
 
 # Temporary
 tmp/
+
+.vercel

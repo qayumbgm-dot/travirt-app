@@ -2,7 +2,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo, useRef } from 'react';
 import { Watchlist, WatchlistGroup, WatchlistSettings, Stock, DiscoverList } from '../types';
 import { parseInstrumentKey } from '../utils/formatters';
-import { watchlistApi, ApiWatchlist } from '../api/watchlist.api';
+import { watchlistApi, ApiWatchlist } from '../apiClient/watchlist.api';
 
 export type ActiveView =
   | { type: 'watchlist'; id: number }

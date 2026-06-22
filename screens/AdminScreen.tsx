@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { adminApi, AdminUser, AdminTicket, AuditEntry, PlatformStats } from '../api/admin.api';
+import { adminApi, AdminUser, AdminTicket, AuditEntry, PlatformStats } from '../apiClient/admin.api';
 import { useToast } from '../contexts/ToastContext';
 import { formatCurrency } from '../utils/formatters';
 

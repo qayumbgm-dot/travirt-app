@@ -3,8 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { usePortfolio } from '../contexts/PortfolioContext';
 import { useToast } from '../contexts/ToastContext';
-import { referralApi, ReferralStats } from '../api/referral.api';
-import { userApi, UserProfile } from '../api/user.api';
+import { referralApi, ReferralStats } from '../apiClient/referral.api';
+import { userApi, UserProfile } from '../apiClient/user.api';
 
 const toFormState = (p: UserProfile | null, email: string) => ({
     firstName:     p?.first_name     ?? '',

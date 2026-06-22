@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
-import { authApi } from './api/auth.api';
+import { authApi } from './apiClient/auth.api';
 import { PortfolioProvider, usePortfolio } from './contexts/PortfolioContext';
 import { WatchlistProvider, useWatchlist } from './contexts/WatchlistContext';
 import { ErrorBoundary } from './components/ErrorBoundary';

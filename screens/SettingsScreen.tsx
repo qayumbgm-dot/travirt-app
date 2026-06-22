@@ -2,8 +2,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useToast } from '../contexts/ToastContext';
-import { settingsApi } from '../api/settings.api';
-import { securityApi, TwoFaStatus, TwoFaSetupResult } from '../api/security.api';
+import { settingsApi } from '../apiClient/settings.api';
+import { securityApi, TwoFaStatus, TwoFaSetupResult } from '../apiClient/security.api';
 import { SUPPORTED_LANGUAGES, setLanguage, LangCode } from '../i18n';
 
 const SETTINGS_KEY = 'travirt_settings';

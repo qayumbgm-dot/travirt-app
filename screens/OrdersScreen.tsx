@@ -6,10 +6,10 @@ import { usePortfolio } from '../contexts/PortfolioContext';
 import { useToast } from '../contexts/ToastContext';
 import { formatCurrency } from '../utils/formatters';
 import type { Order } from '../types';
-import { portfolioApi } from '../api/portfolio.api';
-import { gttApi, GttOrder } from '../api/gtt.api';
-import { alertApi, AlertRecord } from '../api/alert.api';
-import { tradeApi, PendingOrder } from '../api/trade.api';
+import { portfolioApi } from '../apiClient/portfolio.api';
+import { gttApi, GttOrder } from '../apiClient/gtt.api';
+import { alertApi, AlertRecord } from '../apiClient/alert.api';
+import { tradeApi, PendingOrder } from '../apiClient/trade.api';
 
 const ORDER_HISTORY_ITEM_H = 82; // px: p-3 (24px padding) + 2 text lines (~40px) + gap
 

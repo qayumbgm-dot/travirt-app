@@ -32,18 +32,23 @@ const start = async () => {
   }
 
   // ── Instrument master ─────────────────────────────────────────────────────
+  const runRefresh = async () => {
+    await refreshInstruments();
+    // After instruments load/refresh, reload the market token map and re-subscribe
+    await marketService.resubscribeAll();
+  };
+
   const existingCount = await getInstrumentCount();
   if (existingCount < 100) {
     console.log('📊 Downloading instrument master (first run)...');
-    const aliceToken = (env as any).ALICE_ACCESS_TOKEN;
-    refreshInstruments(aliceToken).catch(err =>
+    runRefresh().catch((err) =>
       console.warn('[instruments] Background refresh failed:', err.message),
     );
   } else {
     console.log(`✅ Instrument master ready: ${existingCount.toLocaleString()} instruments`);
   }
 
-  // Refresh daily at 08:00 IST (02:30 UTC)
+  // Refresh daily at 08:00 IST (02:30 UTC) — new contracts added each day
   const msUntil0830IST = (() => {
     const now  = new Date();
     const next = new Date(now);
@@ -52,9 +57,8 @@ const start = async () => {
     return next.getTime() - now.getTime();
   })();
   setTimeout(() => {
-    const aliceToken = (env as any).ALICE_ACCESS_TOKEN;
-    refreshInstruments(aliceToken).catch(console.error);
-    setInterval(() => refreshInstruments(aliceToken).catch(console.error), 24 * 60 * 60 * 1000);
+    runRefresh().catch(console.error);
+    setInterval(() => runRefresh().catch(console.error), 24 * 60 * 60 * 1000);
   }, msUntil0830IST);
 
   // ── Market data + background workers ─────────────────────────────────────

@@ -1,19 +1,15 @@
-// Alice Blue ANT API — order placement and account data.
+// Alice Blue A3 Open API integration.
+// Base: https://a3.aliceblueonline.com/open-api/od/v1
 // Auth: Keycloak JWT Bearer token (ALICE_ACCESS_TOKEN in env).
-// Confirmed working endpoints (2026-06-22):
-//   GET  /api/customer/accountDetails   — profile
-//   GET  /api/limits/getRmsLimits       — margin / funds
-//   GET  /api/placeOrder/fetchOrderBook — order history
-//   GET  /api/placeOrder/fetchTradeBook — trade history
-//   POST /api/placeOrder/executePlaceOrder — place order
+// Order placement uses numeric instrumentId (token) from the V2 contract master.
 
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 import { env } from '../config/env';
 
-const ALICE_API_BASE = 'https://ant.aliceblueonline.com/rest/AliceBlueAPIService/api';
+const A3_BASE = 'https://a3.aliceblueonline.com/open-api/od/v1';
 
 // ─── Credential encryption (AES-256-GCM) ────────────────────────────────────
-// User broker API keys are stored encrypted in the DB as "{iv}:{tag}:{ciphertext}"
+// User broker tokens stored encrypted in DB as "{iv}:{tag}:{ciphertext}"
 
 const getEncryptionKey = (): Buffer | null => {
   if (!env.BROKER_ENCRYPTION_KEY) return null;
@@ -43,13 +39,32 @@ export const decryptApiKey = (stored: string): string => {
 
 export const isBrokerEncryptionConfigured = (): boolean => Boolean(env.BROKER_ENCRYPTION_KEY);
 
-// ─── Platform session token ──────────────────────────────────────────────────
-// The platform's own Alice Blue JWT (ALICE_ACCESS_TOKEN) is used for
-// market data and admin-level queries. Individual user tokens are stored
-// in broker_connections (encrypted) and passed in per-request.
+// ─── Platform token ──────────────────────────────────────────────────────────
 
 export const getPlatformToken = (): string | null =>
-  (env as any).ALICE_ACCESS_TOKEN ?? null;
+  env.ALICE_ACCESS_TOKEN ?? null;
+
+// ─── WebSocket session token (sha256(sha256(jwt))) ───────────────────────────
+// Required before connecting to wss://ws1.aliceblueonline.com/NorenWS/
+
+export const getWsSessionToken = (jwtToken: string): string => {
+  const h1 = createHash('sha256').update(jwtToken, 'utf8').digest('hex');
+  return createHash('sha256').update(h1, 'utf8').digest('hex');
+};
+
+// Activates a WebSocket session; must be called before opening the NorenWS socket.
+export const createWsSession = async (bearerToken: string, clientId: string): Promise<void> => {
+  const resp = await fetch(`${A3_BASE}/profile/createWsSess`, {
+    method:  'POST',
+    headers: {
+      Authorization:  `Bearer ${bearerToken}`,
+      'Content-Type': 'application/json',
+    },
+    body:   JSON.stringify({ source: 'API', userId: clientId }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!resp.ok) throw new Error(`createWsSess HTTP ${resp.status}`);
+};
 
 // ─── Account info ───────────────────────────────────────────────────────────
 
@@ -63,45 +78,47 @@ export interface AliceAccountDetails {
 
 export const fetchAccountDetails = async (bearerToken: string): Promise<AliceAccountDetails | null> => {
   try {
-    const resp = await fetch(`${ALICE_API_BASE}/customer/accountDetails`, {
+    const resp = await fetch(`${A3_BASE}/profile/`, {
       headers: { Authorization: `Bearer ${bearerToken}` },
       signal:  AbortSignal.timeout(8_000),
     });
     if (!resp.ok) return null;
-    return await resp.json() as AliceAccountDetails;
+    const data = await resp.json() as { result?: AliceAccountDetails[] };
+    return data?.result?.[0] ?? null;
   } catch {
     return null;
   }
 };
-
-// ─── Funds / margin ─────────────────────────────────────────────────────────
 
 export const fetchRmsLimits = async (bearerToken: string): Promise<unknown | null> => {
   try {
-    const resp = await fetch(`${ALICE_API_BASE}/limits/getRmsLimits`, {
+    const resp = await fetch(`${A3_BASE}/limits/`, {
       headers: { Authorization: `Bearer ${bearerToken}` },
       signal:  AbortSignal.timeout(8_000),
     });
     if (!resp.ok) return null;
-    return await resp.json();
+    const data = await resp.json() as { result?: unknown[] };
+    return data?.result?.[0] ?? null;
   } catch {
     return null;
   }
 };
 
-// ─── Order placement types ───────────────────────────────────────────────────
+// ─── Order placement ─────────────────────────────────────────────────────────
+// A3 uses numeric instrumentId (= token from V2 contract master) for orders.
 
 export interface AliceOrderRequest {
   bearerToken:     string;
   brokerUserId:    string;
-  symbol:          string;
-  exchange:        string;
+  symbol:          string;   // trading_symbol (e.g. RELIANCE-EQ)
+  instrumentId:    string;   // numeric token from instrument master
+  exchange:        string;   // NSE, BSE, NFO, MCX, CDS
   transactionType: 'BUY' | 'SELL';
   orderType:       'MARKET' | 'LIMIT' | 'SL' | 'SLM';
   quantity:        number;
   price:           number;
   triggerPrice?:   number;
-  productType?:    string;
+  productType?:    'INTRADAY' | 'LONGTERM' | 'MTF';
 }
 
 export interface AliceOrderResult {
@@ -110,44 +127,36 @@ export interface AliceOrderResult {
   error:         string | null;
 }
 
-interface AliceApiResponse {
-  stat:    string;
-  NOrdNo?: string;
-  emsg?:   string;
-}
-
-// ─── Place order ─────────────────────────────────────────────────────────────
-
 export const placeAliceOrder = async (req: AliceOrderRequest): Promise<AliceOrderResult> => {
   try {
-    const priceType = req.orderType === 'MARKET' ? 'MARKET'
-                    : req.orderType === 'SLM'    ? 'SL-M'
-                    : req.orderType === 'SL'     ? 'SL'
-                    : 'LIMIT';
+    const orderType =
+      req.orderType === 'MARKET' ? 'MARKET' :
+      req.orderType === 'SLM'    ? 'SLM'    :
+      req.orderType === 'SL'     ? 'SL'     : 'LIMIT';
 
-    const body = {
-      userId:          req.brokerUserId,
-      orderType:       'REGULAR',
-      instrumentToken: req.symbol,
-      exchange:        req.exchange,
-      transactionType: req.transactionType,
-      productType:     req.productType ?? 'MIS',
-      priceType,
-      price:           req.orderType === 'MARKET' ? 0 : req.price,
-      qty:             req.quantity,
-      disclosedQty:    0,
-      triggerPrice:    req.triggerPrice ?? 0,
-      orderTag:        'TRAVIRT',
+    const leg = {
+      exchange:          req.exchange,
+      instrumentId:      req.instrumentId,
+      transactionType:   req.transactionType,
+      quantity:          req.quantity,
+      product:           req.productType ?? 'INTRADAY',
+      orderComplexity:   'REGULAR',
+      orderType,
+      validity:          'DAY',
+      price:             req.orderType === 'MARKET' ? '0' : String(req.price),
+      slTriggerPrice:    req.triggerPrice ? String(req.triggerPrice) : '',
+      disclosedQuantity: '',
+      orderTag:          'TRAVIRT',
     };
 
-    const resp = await fetch(`${ALICE_API_BASE}/placeOrder/executePlaceOrder`, {
+    const resp = await fetch(`${A3_BASE}/orders/placeorder`, {
       method:  'POST',
       headers: {
         Authorization:  `Bearer ${req.bearerToken}`,
         'Content-Type': 'application/json',
         'User-Agent':   'TraVirt/1.0',
       },
-      body:   JSON.stringify([body]),
+      body:   JSON.stringify([leg]),
       signal: AbortSignal.timeout(10_000),
     });
 
@@ -155,13 +164,15 @@ export const placeAliceOrder = async (req: AliceOrderRequest): Promise<AliceOrde
       return { success: false, brokerOrderId: null, error: `HTTP ${resp.status}` };
     }
 
-    const data = await resp.json() as AliceApiResponse[] | AliceApiResponse;
-    const result = Array.isArray(data) ? data[0] : data;
+    const data = await resp.json() as { result?: { brokerOrderId?: string }[] } | { brokerOrderId?: string }[];
+    const result = Array.isArray(data)
+      ? data[0]
+      : (data as any)?.result?.[0];
 
-    if (result?.stat === 'Ok' && result.NOrdNo) {
-      return { success: true, brokerOrderId: result.NOrdNo, error: null };
+    if (result?.brokerOrderId) {
+      return { success: true, brokerOrderId: String(result.brokerOrderId), error: null };
     }
-    return { success: false, brokerOrderId: null, error: result?.emsg ?? 'Unknown broker error' };
+    return { success: false, brokerOrderId: null, error: (result as any)?.message ?? 'Unknown broker error' };
 
   } catch (err) {
     return { success: false, brokerOrderId: null, error: (err as Error).message };

@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { usePortfolio } from '../contexts/PortfolioContext';
 import { formatCurrency } from '../utils/formatters';
-import { leaderboardApi } from '../api/leaderboard.api';
+import { leaderboardApi } from '../apiClient/leaderboard.api';
 
 const PROFILE_KEY = 'travirt_profile';
 

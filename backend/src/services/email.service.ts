@@ -22,6 +22,34 @@ const smtpConfig = () => ({
   socketTimeout:     15_000,  // inactivity on the socket
 });
 
+const brevoSender = () => ({
+  name:  env.BREVO_SENDER_NAME,
+  email: env.BREVO_SENDER_EMAIL ?? env.SMTP_FROM,
+});
+
+// Send via Brevo's transactional HTTP API (HTTPS:443 — not blocked like SMTP).
+const sendViaBrevo = async (opts: EmailOptions): Promise<void> => {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method:  'POST',
+    headers: {
+      'api-key':      env.BREVO_API_KEY as string,
+      'content-type': 'application/json',
+      accept:         'application/json',
+    },
+    body: JSON.stringify({
+      sender:      brevoSender(),
+      to:          [{ email: opts.to }],
+      subject:     opts.subject,
+      htmlContent: opts.html,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Brevo API ${res.status}: ${detail.slice(0, 300)}`);
+  }
+};
+
 const sendViaSMTP = async (opts: EmailOptions): Promise<void> => {
   // nodemailer is an optional peer dependency — install it when SMTP is needed
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -37,14 +65,39 @@ const sendViaSMTP = async (opts: EmailOptions): Promise<void> => {
   });
 };
 
-// Diagnostic: reports which SMTP settings are present (never leaks the password)
-// and attempts a live SMTP handshake so misconfiguration surfaces clearly.
+// Diagnostic: reports the active transport's config (never leaks secrets) and
+// runs a live check so misconfiguration surfaces clearly.
 export const verifyEmailTransport = async (): Promise<{
+  transport: 'brevo' | 'smtp' | 'none';
   configured: boolean;
   config: Record<string, string | boolean>;
   verified: boolean;
   error?: string;
 }> => {
+  // ── Brevo (preferred) ──────────────────────────────────────────────────────
+  if (env.BREVO_API_KEY) {
+    const config = {
+      BREVO_API_KEY:      `set (${env.BREVO_API_KEY.length} chars)`,
+      BREVO_SENDER_EMAIL: env.BREVO_SENDER_EMAIL ?? env.SMTP_FROM,
+      BREVO_SENDER_NAME:  env.BREVO_SENDER_NAME,
+    };
+    try {
+      const res = await fetch('https://api.brevo.com/v3/account', {
+        headers: { 'api-key': env.BREVO_API_KEY, accept: 'application/json' },
+        signal:  AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        return { transport: 'brevo', configured: true, config, verified: false,
+          error: `Brevo API ${res.status}: ${detail.slice(0, 200)}` };
+      }
+      return { transport: 'brevo', configured: true, config, verified: true };
+    } catch (err) {
+      return { transport: 'brevo', configured: true, config, verified: false, error: (err as Error).message };
+    }
+  }
+
+  // ── SMTP (fallback) ────────────────────────────────────────────────────────
   const config = {
     SMTP_HOST:   env.SMTP_HOST ?? '(not set)',
     SMTP_PORT:   env.SMTP_PORT,
@@ -54,7 +107,8 @@ export const verifyEmailTransport = async (): Promise<{
     SMTP_FROM:   env.SMTP_FROM,
   };
   if (!env.SMTP_HOST) {
-    return { configured: false, config, verified: false, error: 'SMTP_HOST not set — emails are logged only' };
+    return { transport: 'none', configured: false, config, verified: false,
+      error: 'No email transport configured — emails are logged only' };
   }
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -63,19 +117,24 @@ export const verifyEmailTransport = async (): Promise<{
     };
     const transporter = nodemailer.createTransport(smtpConfig());
     await transporter.verify();
-    return { configured: true, config, verified: true };
+    return { transport: 'smtp', configured: true, config, verified: true };
   } catch (err) {
-    return { configured: true, config, verified: false, error: (err as Error).message };
+    return { transport: 'smtp', configured: true, config, verified: false, error: (err as Error).message };
   }
 };
 
 export const sendEmail = async (opts: EmailOptions): Promise<void> => {
-  if (!env.SMTP_HOST) {
+  // Prefer Brevo HTTP API (works on Render); fall back to SMTP; else log only.
+  if (!env.BREVO_API_KEY && !env.SMTP_HOST) {
     console.log(`[email] Would send to ${opts.to}: ${opts.subject}`);
     return;
   }
   try {
-    await sendViaSMTP(opts);
+    if (env.BREVO_API_KEY) {
+      await sendViaBrevo(opts);
+    } else {
+      await sendViaSMTP(opts);
+    }
   } catch (err) {
     console.error('[email] Send failed:', err);
     // Non-fatal — never let email failure crash a request

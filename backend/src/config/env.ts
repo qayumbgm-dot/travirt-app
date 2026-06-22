@@ -25,7 +25,13 @@ const schema = z.object({
   //   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
   // Optional: broker connections are disabled when absent
   BROKER_ENCRYPTION_KEY: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
-  // SMTP — optional; emails log to console when absent
+  // Brevo HTTP email API — preferred in production (Render blocks outbound SMTP).
+  // When BREVO_API_KEY is set, email sends over HTTPS via Brevo instead of SMTP.
+  BREVO_API_KEY:      z.string().optional(),
+  BREVO_SENDER_EMAIL: z.string().optional(),  // a verified Brevo sender; falls back to SMTP_FROM
+  BREVO_SENDER_NAME:  z.string().default('TraVirt'),
+  // SMTP — optional fallback (works locally; blocked on Render free tier).
+  // Emails log to console when neither Brevo nor SMTP is configured.
   SMTP_HOST:   z.string().optional(),
   SMTP_PORT:   z.string().default('587'),
   SMTP_SECURE: z.string().optional(),   // 'true' for port 465

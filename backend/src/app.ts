@@ -149,6 +149,20 @@ export const buildApp = async (): Promise<FastifyInstance> => {
       });
   });
 
+  // ── Redis diagnostic ──────────────────────────────────────────────────────
+  // GET /health/redis → masked URL + live ping result with the real error
+  app.get('/health/redis', async (_req, reply) => {
+    const raw = env.REDIS_URL;
+    // Mask credentials: rediss://default:PASS@host:port → rediss://default:***@host:port
+    const masked = raw.replace(/(:\/\/[^:]*:)[^@]*(@)/, '$1***$2');
+    try {
+      const pong = await redis.ping();
+      return reply.send({ url: masked, scheme: raw.split('://')[0], ping: pong, ok: true });
+    } catch (err) {
+      return reply.code(503).send({ url: masked, scheme: raw.split('://')[0], ok: false, error: (err as Error).message });
+    }
+  });
+
   // ── Email diagnostic ──────────────────────────────────────────────────────
   // GET  /health/email           → reports SMTP config + live handshake result
   // POST /health/email?to=addr   → also sends a test email to `to`

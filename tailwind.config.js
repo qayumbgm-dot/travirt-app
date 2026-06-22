@@ -46,6 +46,7 @@ export default {
         'fade-in': 'fadeIn 0.3s ease-out',
         'spin-slow': 'spin 3s linear infinite',
         'slide-in-right': 'slideInRight 0.3s ease-out',
+        'toast-out': 'toastOut 0.25s ease-in forwards',
       },
       keyframes: {
         fadeIn: {
@@ -55,6 +56,10 @@ export default {
         slideInRight: {
           '0%': { transform: 'translateX(100%)' },
           '100%': { transform: 'translateX(0)' },
+        },
+        toastOut: {
+          '0%': { opacity: '1', transform: 'translateX(0)' },
+          '100%': { opacity: '0', transform: 'translateX(110%)' },
         },
       },
     },

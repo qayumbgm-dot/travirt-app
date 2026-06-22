@@ -10,18 +10,25 @@ const appOrigin = () => env.FRONTEND_URL ?? env.CORS_ORIGIN;
 
 // ─── Transport ────────────────────────────────────────────────────────────────
 
+// Shared SMTP transport settings. Timeouts are critical: without them a blocked
+// or stalled outbound connection hangs the request forever instead of erroring.
+const smtpConfig = () => ({
+  host:              env.SMTP_HOST,
+  port:              parseInt(env.SMTP_PORT),
+  secure:            env.SMTP_SECURE === 'true',
+  auth:              { user: env.SMTP_USER, pass: env.SMTP_PASS },
+  connectionTimeout: 10_000,  // TCP connect
+  greetingTimeout:   10_000,  // wait for SMTP greeting
+  socketTimeout:     15_000,  // inactivity on the socket
+});
+
 const sendViaSMTP = async (opts: EmailOptions): Promise<void> => {
   // nodemailer is an optional peer dependency — install it when SMTP is needed
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const nodemailer = require('nodemailer') as {
     createTransport: (cfg: unknown) => { sendMail: (msg: unknown) => Promise<unknown> };
   };
-  const transporter = nodemailer.createTransport({
-    host:   env.SMTP_HOST,
-    port:   parseInt(env.SMTP_PORT),
-    secure: env.SMTP_SECURE === 'true',
-    auth:   { user: env.SMTP_USER, pass: env.SMTP_PASS },
-  });
+  const transporter = nodemailer.createTransport(smtpConfig());
   await transporter.sendMail({
     from:    `"TraVirt" <${env.SMTP_FROM}>`,
     to:      opts.to,
@@ -54,12 +61,7 @@ export const verifyEmailTransport = async (): Promise<{
     const nodemailer = require('nodemailer') as {
       createTransport: (cfg: unknown) => { verify: () => Promise<true> };
     };
-    const transporter = nodemailer.createTransport({
-      host:   env.SMTP_HOST,
-      port:   parseInt(env.SMTP_PORT),
-      secure: env.SMTP_SECURE === 'true',
-      auth:   { user: env.SMTP_USER, pass: env.SMTP_PASS },
-    });
+    const transporter = nodemailer.createTransport(smtpConfig());
     await transporter.verify();
     return { configured: true, config, verified: true };
   } catch (err) {

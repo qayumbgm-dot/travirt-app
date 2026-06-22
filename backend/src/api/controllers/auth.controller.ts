@@ -46,10 +46,12 @@ import jwt from 'jsonwebtoken';
 
 const REFRESH_COOKIE = 'refresh_token';
 
+const isProd = env.NODE_ENV === 'production';
+
 const cookieOptions = () => ({
   httpOnly: true,
-  secure: true,
-  sameSite: 'none' as const,
+  secure: isProd,
+  sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
   path: '/',
   maxAge: env.REFRESH_TOKEN_EXPIRES_DAYS * 24 * 60 * 60,  // seconds
 });

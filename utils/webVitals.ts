@@ -36,7 +36,9 @@ const beacon = (name: VitalName, value: number): void => {
     rating: rate(name, value),
   };
   try {
-    navigator.sendBeacon(ENDPOINT, JSON.stringify(payload));
+    // Blob forces Content-Type: application/json so Fastify can parse the body
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    navigator.sendBeacon(ENDPOINT, blob);
   } catch { /* sendBeacon not available */ }
 };
 
@@ -44,40 +46,52 @@ export const initWebVitals = (): void => {
   if (typeof window === 'undefined' || typeof PerformanceObserver === 'undefined') return;
 
   try {
-    // LCP — largest contentful paint
+    // LCP — only the last (most accurate) entry, sent on page hide
+    let lcpValue = 0;
     new PerformanceObserver((list) => {
       const entries = list.getEntries() as (PerformanceEntry & { startTime: number })[];
       const last = entries[entries.length - 1];
-      if (last) beacon('LCP', last.startTime);
+      if (last) lcpValue = last.startTime;
     }).observe({ type: 'largest-contentful-paint', buffered: true });
 
-    // CLS — cumulative layout shift (accumulate across session)
+    // CLS — accumulate but only send once on page hide
     let clsTotal = 0;
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries() as (PerformanceEntry & { hadRecentInput: boolean; value: number })[]) {
         if (!entry.hadRecentInput) clsTotal += entry.value;
       }
-      beacon('CLS', clsTotal);
     }).observe({ type: 'layout-shift', buffered: true });
 
-    // FCP — first contentful paint
+    // FCP — fires once
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
         if (entry.name === 'first-contentful-paint') beacon('FCP', entry.startTime);
       }
     }).observe({ type: 'paint', buffered: true });
 
-    // INP — interaction to next paint (modern replacement for FID)
+    // INP — track worst interaction, send on page hide
+    let inpWorst = 0;
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries() as (PerformanceEntry & { duration: number })[]) {
-        beacon('INP', entry.duration);
+        if (entry.duration > inpWorst) inpWorst = entry.duration;
       }
     }).observe({ type: 'event', buffered: true, durationThreshold: 16 } as PerformanceObserverInit);
 
-    // TTFB — time to first byte from navigation timing
+    // TTFB — fires once from navigation timing
     const navEntry = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
     if (navEntry) {
       beacon('TTFB', navEntry.responseStart - navEntry.requestStart);
     }
+
+    // Send accumulated metrics on page unload (once per session)
+    const sendFinal = () => {
+      if (lcpValue > 0) beacon('LCP', lcpValue);
+      if (clsTotal > 0) beacon('CLS', clsTotal);
+      if (inpWorst > 0) beacon('INP', inpWorst);
+    };
+    addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') sendFinal();
+    }, { once: true });
+    addEventListener('pagehide', sendFinal, { once: true });
   } catch { /* PerformanceObserver not supported — skip silently */ }
 };

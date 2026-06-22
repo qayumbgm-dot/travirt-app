@@ -1,8 +1,9 @@
 name: Deploy
 
+# Manual-only. Production deploys are handled automatically by Render (backend,
+# on push to master) and Vercel (frontend). This SSH-to-VPS workflow is kept as
+# a template and only runs when triggered by hand, so it never fails on pushes.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       environment:
@@ -124,7 +125,8 @@ jobs:
     if: always()
     steps:
       - name: Slack notification
-        if: ${{ secrets.SLACK_WEBHOOK != '' }}
+        if: ${{ vars.SLACK_ENABLED == 'true' }}
+        continue-on-error: true
         uses: slackapi/slack-github-action@v1.26.0
         with:
           payload: |

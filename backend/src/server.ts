@@ -22,11 +22,26 @@ const start = async () => {
   console.log(`\n🚀 Starting TraVirt API [${env.NODE_ENV}]...\n`);
 
   // ── Database ──────────────────────────────────────────────────────────────
+  // Neon free tier auto-suspends and cold-starts in 5–15s. Retry a few times so
+  // a cold DB on boot doesn't crash the process into a Render restart loop.
+  const connectDb = async () => {
+    const MAX_TRIES = 5;
+    for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+      try {
+        await pool.query('SELECT 1');
+        console.log('✅ PostgreSQL connected');
+        return;
+      } catch (err) {
+        console.warn(`[db] connect attempt ${attempt}/${MAX_TRIES} failed: ${(err as Error).message}`);
+        if (attempt === MAX_TRIES) throw err;
+        await new Promise((r) => setTimeout(r, 3_000));
+      }
+    }
+  };
   try {
-    await pool.query('SELECT 1');
-    console.log('✅ PostgreSQL connected');
+    await connectDb();
   } catch (err) {
-    console.error('❌ PostgreSQL connection failed:', err);
+    console.error('❌ PostgreSQL connection failed after retries:', err);
     process.exit(1);
   }
 
@@ -40,22 +55,50 @@ const start = async () => {
     process.exit(1);
   }
 
-  // ── Instrument master ─────────────────────────────────────────────────────
+  // ── Server ────────────────────────────────────────────────────────────────
+  // Start listening as EARLY as possible. On Render's free tier the instance
+  // spins down after inactivity; every cold start must answer requests fast or
+  // the proxy returns 502. Heavy init (market feed, workers, instrument master)
+  // is deferred to run AFTER listen so it never blocks request handling.
+  const app = await buildApp();
+
+  await app.listen({ port: env.PORT, host: '0.0.0.0' });
+  console.log(`\n✅ API listening on http://localhost:${env.PORT}`);
+  console.log(`   Health: http://localhost:${env.PORT}/health`);
+  console.log(`   Auth:   http://localhost:${env.PORT}/api/auth\n`);
+
+  // ── Background init (does NOT block listening) ────────────────────────────
   const runRefresh = async () => {
     await refreshInstruments();
     // After instruments load/refresh, reload the market token map and re-subscribe
     await marketService.resubscribeAll();
   };
 
-  const existingCount = await getInstrumentCount();
-  if (existingCount < 100) {
-    console.log('📊 Downloading instrument master (first run)...');
-    runRefresh().catch((err) =>
-      console.warn('[instruments] Background refresh failed:', err.message),
-    );
-  } else {
-    console.log(`✅ Instrument master ready: ${existingCount.toLocaleString()} instruments`);
-  }
+  // Market data + background workers
+  marketService
+    .start()
+    .then(() => {
+      startGttWorker();
+      startAlertWorker();
+      startLimitOrderWorker();
+      startDailyBonusWorker();
+      console.log(`✅ Market service started [${env.ALICE_USER_ID ? 'LIVE' : 'SIMULATION'}]`);
+    })
+    .catch((err) => console.error('[market] start failed:', err));
+
+  // Instrument master
+  getInstrumentCount()
+    .then((existingCount) => {
+      if (existingCount < 100) {
+        console.log('📊 Downloading instrument master (first run)...');
+        runRefresh().catch((err) =>
+          console.warn('[instruments] Background refresh failed:', err.message),
+        );
+      } else {
+        console.log(`✅ Instrument master ready: ${existingCount.toLocaleString()} instruments`);
+      }
+    })
+    .catch((err) => console.warn('[instruments] count check failed:', err.message));
 
   // Refresh daily at 08:00 IST (02:30 UTC) — new contracts added each day
   const msUntil0830IST = (() => {
@@ -69,22 +112,6 @@ const start = async () => {
     runRefresh().catch(console.error);
     setInterval(() => runRefresh().catch(console.error), 24 * 60 * 60 * 1000);
   }, msUntil0830IST);
-
-  // ── Market data + background workers ─────────────────────────────────────
-  await marketService.start();
-  startGttWorker();
-  startAlertWorker();
-  startLimitOrderWorker();
-  startDailyBonusWorker();
-  console.log(`✅ Market service started [${env.ALICE_USER_ID ? 'LIVE' : 'SIMULATION'}]`);
-
-  // ── Server ────────────────────────────────────────────────────────────────
-  const app = await buildApp();
-
-  await app.listen({ port: env.PORT, host: '0.0.0.0' });
-  console.log(`\n✅ API listening on http://localhost:${env.PORT}`);
-  console.log(`   Health: http://localhost:${env.PORT}/health`);
-  console.log(`   Auth:   http://localhost:${env.PORT}/api/auth\n`);
 
   // ── Graceful shutdown ─────────────────────────────────────────────────────
   const shutdown = async (signal: string) => {

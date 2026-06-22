@@ -30,6 +30,43 @@ const sendViaSMTP = async (opts: EmailOptions): Promise<void> => {
   });
 };
 
+// Diagnostic: reports which SMTP settings are present (never leaks the password)
+// and attempts a live SMTP handshake so misconfiguration surfaces clearly.
+export const verifyEmailTransport = async (): Promise<{
+  configured: boolean;
+  config: Record<string, string | boolean>;
+  verified: boolean;
+  error?: string;
+}> => {
+  const config = {
+    SMTP_HOST:   env.SMTP_HOST ?? '(not set)',
+    SMTP_PORT:   env.SMTP_PORT,
+    SMTP_SECURE: env.SMTP_SECURE ?? '(not set)',
+    SMTP_USER:   env.SMTP_USER ?? '(not set)',
+    SMTP_PASS:   env.SMTP_PASS ? `set (${env.SMTP_PASS.length} chars)` : '(not set)',
+    SMTP_FROM:   env.SMTP_FROM,
+  };
+  if (!env.SMTP_HOST) {
+    return { configured: false, config, verified: false, error: 'SMTP_HOST not set — emails are logged only' };
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const nodemailer = require('nodemailer') as {
+      createTransport: (cfg: unknown) => { verify: () => Promise<true> };
+    };
+    const transporter = nodemailer.createTransport({
+      host:   env.SMTP_HOST,
+      port:   parseInt(env.SMTP_PORT),
+      secure: env.SMTP_SECURE === 'true',
+      auth:   { user: env.SMTP_USER, pass: env.SMTP_PASS },
+    });
+    await transporter.verify();
+    return { configured: true, config, verified: true };
+  } catch (err) {
+    return { configured: true, config, verified: false, error: (err as Error).message };
+  }
+};
+
 export const sendEmail = async (opts: EmailOptions): Promise<void> => {
   if (!env.SMTP_HOST) {
     console.log(`[email] Would send to ${opts.to}: ${opts.subject}`);

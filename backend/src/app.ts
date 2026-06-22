@@ -30,6 +30,7 @@ import instrumentRoutes from './api/routes/instruments.routes';
 import { pool } from './database/pool';
 import { redis } from './config/redis';
 import { recordRequest } from './services/metrics.service';
+import { verifyEmailTransport, sendEmail } from './services/email.service';
 
 export const buildApp = async (): Promise<FastifyInstance> => {
   const app = Fastify({
@@ -146,6 +147,26 @@ export const buildApp = async (): Promise<FastifyInstance> => {
           redis:    redisOk ? 'ok' : 'error',
         },
       });
+  });
+
+  // ── Email diagnostic ──────────────────────────────────────────────────────
+  // GET  /health/email           → reports SMTP config + live handshake result
+  // POST /health/email?to=addr   → also sends a test email to `to`
+  app.get('/health/email', async (_req, reply) => {
+    const result = await verifyEmailTransport();
+    return reply.code(result.verified ? 200 : 503).send(result);
+  });
+  app.post('/health/email', async (req, reply) => {
+    const to = (req.query as { to?: string })?.to;
+    if (!to) return reply.code(400).send({ error: 'pass ?to=email@example.com' });
+    const status = await verifyEmailTransport();
+    if (!status.verified) return reply.code(503).send(status);
+    try {
+      await sendEmail({ to, subject: 'TraVirt SMTP test', html: '<p>SMTP is working ✅</p>' });
+      return reply.send({ sent: true, to });
+    } catch (err) {
+      return reply.code(500).send({ sent: false, error: (err as Error).message });
+    }
   });
 
   // ── Root-level routes (metrics — scraped directly, not through Nginx /api) ─

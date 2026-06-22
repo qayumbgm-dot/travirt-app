@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode, useCallback, useRef } from 'react';
-import { PortfolioState, Order, TransactionType, OrderType, OrderVariety, Stock, Transaction, GTTOrder, GTTStatus, GTTTriggerType, Alert, AlertStatus, MarketStatus } from '../types';
+import { PortfolioState, Order, TransactionType, OrderType, OrderVariety, Stock, Transaction, GTTOrder, GTTStatus, GTTTriggerType, Alert, AlertOperator, AlertStatus, MarketStatus } from '../types';
 import { useMarketData } from '../hooks/useMarketData';
 import { formatCurrency } from '../utils/formatters';
 import { INITIAL_INR_BALANCE, INITIAL_NXO_BALANCE, INITIAL_VIRTUAL_BALANCE, RISK_CONFIG } from '../constants';
@@ -33,6 +33,7 @@ interface PortfolioContextType {
     marketData: Stock[];
     marketStatus: MarketStatus;
     loading: boolean;
+    sessionPnl: number;
     addInstruments: (stocks: Stock[]) => void;
     addInr: (amount: number) => void;
     buyNfino: (inrAmount: number) => boolean;
@@ -42,6 +43,11 @@ interface PortfolioContextType {
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
+
+// ─── Session tracking helpers ─────────────────────────────────────────────────
+const SESSION_DATE_KEY    = 'travirt_session_date';
+const SESSION_BALANCE_KEY = 'travirt_session_balance';
+const getTodayKey = () => new Date().toISOString().slice(0, 10);
 
 // ─── DB row → frontend type mappers ──────────────────────────────────────────
 
@@ -124,6 +130,16 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
     const apiAvailable   = useRef(true);
     const warnedDailyRef    = useRef(false);
     const warnedDrawdownRef = useRef(false);
+    const sessionInitializedRef = useRef(false);
+    const alertsRef = useRef<Alert[]>([]);
+
+    const [sessionStartBalance, setSessionStartBalance] = useState<number>(() => {
+        const today = getTodayKey();
+        const storedDate = localStorage.getItem(SESSION_DATE_KEY);
+        if (storedDate !== today) return 0;
+        const stored = parseFloat(localStorage.getItem(SESSION_BALANCE_KEY) ?? '0');
+        return isNaN(stored) ? 0 : stored;
+    });
 
     const PEAK_KEY = 'travirt_peak_account_value';
     const [peakAccountValue, setPeakAccountValue] = useState<number>(() => {
@@ -265,6 +281,61 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
             warnedDrawdownRef.current = false;
         }
     }, [riskEngine, showToast]);
+
+    // ── Session start-balance initialisation (once per day, after data loads) ──
+    useEffect(() => {
+        if (loading || marketLoading || sessionInitializedRef.current) return;
+        // Wait for positions to be marked to market before snapshotting
+        if (portfolio.positions.length > 0 && portfolio.totalCurrentValue === 0) return;
+
+        const today = getTodayKey();
+        const storedDate  = localStorage.getItem(SESSION_DATE_KEY);
+        const storedBal   = parseFloat(localStorage.getItem(SESSION_BALANCE_KEY) ?? '0');
+
+        if (storedDate === today && !isNaN(storedBal) && storedBal > 0) {
+            setSessionStartBalance(storedBal);
+        } else {
+            const snap = portfolio.virtualBalance + portfolio.totalCurrentValue;
+            localStorage.setItem(SESSION_DATE_KEY,    today);
+            localStorage.setItem(SESSION_BALANCE_KEY, snap.toString());
+            setSessionStartBalance(snap);
+        }
+        sessionInitializedRef.current = true;
+    }, [loading, marketLoading, portfolio.positions.length, portfolio.virtualBalance, portfolio.totalCurrentValue]);
+
+    // ── Alert evaluation — fires on every market-data tick ───────────────────
+    useEffect(() => {
+        if (marketData.length === 0) return;
+        const active = alertsRef.current.filter(a => a.status === AlertStatus.ACTIVE);
+        if (active.length === 0) return;
+
+        const triggered: Alert[] = [];
+        for (const alert of active) {
+            const stock = marketData.find(s =>
+                s.symbol === alert.symbol && (!alert.exchange || s.exchange === alert.exchange)
+            );
+            if (!stock) continue;
+            const ltp = stock.ltp;
+            const met = alert.operator === AlertOperator.GTE ? ltp >= alert.value
+                      : alert.operator === AlertOperator.LTE ? ltp <= alert.value
+                      : alert.operator === AlertOperator.GT  ? ltp >  alert.value
+                      : alert.operator === AlertOperator.LT  ? ltp <  alert.value
+                      : alert.operator === AlertOperator.EQ  ? ltp === alert.value
+                      : false;
+            if (met) triggered.push(alert);
+        }
+        if (triggered.length === 0) return;
+
+        const ids = new Set(triggered.map(a => a.id));
+        setPortfolio(prev => ({
+            ...prev,
+            alerts: prev.alerts.map(a => ids.has(a.id) ? { ...a, status: AlertStatus.TRIGGERED } : a),
+        }));
+        triggered.forEach(alert => {
+            const dir = alert.operator === AlertOperator.GTE || alert.operator === AlertOperator.GT ? '≥' : '≤';
+            showToast(`Alert: ${alert.symbol} ${dir} ₹${alert.value.toLocaleString('en-IN')} triggered`, 'info');
+        });
+    }, [marketData, showToast]);
 
     // ── Trade execution ───────────────────────────────────────────────────────
     const executeTrade = useCallback((order: Omit<Order, 'id' | 'timestamp' | 'status'>): boolean => {
@@ -515,9 +586,16 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
         }));
     }, []);
 
+    // Keep alertsRef in sync with latest portfolio.alerts every render
+    alertsRef.current = portfolio.alerts;
+
+    const sessionPnl = sessionStartBalance > 0
+        ? (portfolio.virtualBalance + portfolio.totalCurrentValue) - sessionStartBalance
+        : 0;
+
     return (
         <PortfolioContext.Provider value={{
-            portfolio, riskEngine, executeTrade, executeBracketOrder, createGTT, deleteGTT,
+            portfolio, riskEngine, sessionPnl, executeTrade, executeBracketOrder, createGTT, deleteGTT,
             createAlert, deleteAlert, getStock, marketData, marketStatus,
             loading: loading || marketLoading, addInstruments, addInr, buyNfino, convertNfinoToVirtual,
             claimDailyBonus, addReward,

@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { usePortfolio } from '../contexts/PortfolioContext';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
@@ -45,6 +45,108 @@ const IndexCard: React.FC<{ asset: typeof MOCK_INDICES[0] }> = ({ asset }) => (
         </div>
     </div>
 );
+
+// ── Account Health Card ───────────────────────────────────────────────────────
+
+const AccountHealthCard: React.FC = () => {
+    const { portfolio, riskEngine, sessionPnl } = usePortfolio();
+    const [timeToReset, setTimeToReset] = useState('');
+
+    useEffect(() => {
+        const tick = () => {
+            const now      = new Date();
+            const midnight = new Date(now);
+            midnight.setHours(24, 0, 0, 0);
+            const diff = midnight.getTime() - now.getTime();
+            const h = Math.floor(diff / 3_600_000);
+            const m = Math.floor((diff % 3_600_000) / 60_000);
+            setTimeToReset(`${h}h ${m}m`);
+        };
+        tick();
+        const id = setInterval(tick, 60_000);
+        return () => clearInterval(id);
+    }, []);
+
+    const accountValue = portfolio.virtualBalance + portfolio.totalCurrentValue;
+    if (accountValue <= 0) return null;
+
+    const sessionBase    = accountValue - sessionPnl;
+    const sessionPnlPct  = sessionBase > 0 ? (sessionPnl / sessionBase) * 100 : 0;
+    const dailyPct       = Math.min(riskEngine.dailyLossConsumedPct * 100, 100);
+
+    const status =
+        riskEngine.maxDrawdownState === 'breached' || riskEngine.dailyLossState === 'breached' ? 'breached' :
+        riskEngine.maxDrawdownState === 'warning'  || riskEngine.dailyLossState === 'warning'  ? 'warning'  :
+        'safe';
+
+    const statusColor =
+        status === 'breached' ? { ring: 'border-danger/40', icon: 'text-danger',       badge: 'bg-danger/20 text-danger',       dot: 'bg-danger',       bar: 'bg-danger'      } :
+        status === 'warning'  ? { ring: 'border-yellow-400/30', icon: 'text-yellow-400', badge: 'bg-yellow-400/20 text-yellow-400', dot: 'bg-yellow-400', bar: 'bg-yellow-400' } :
+                                { ring: 'border-overlay',       icon: 'text-success',    badge: 'bg-success/20 text-success',      dot: 'bg-success',      bar: 'bg-success'    };
+
+    return (
+        <div className={`bg-surface rounded-lg shadow-lg border ${statusColor.ring}`}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3 border-b border-overlay">
+                <div className="flex items-center gap-2">
+                    <i className={`fas fa-heartbeat ${statusColor.icon}`}></i>
+                    <span className="font-bold text-text-primary">Account Health</span>
+                </div>
+                <div className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full ${statusColor.badge}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${statusColor.dot}`}></span>
+                    {status === 'breached' ? 'BREACHED' : status === 'warning' ? 'AT RISK' : 'HEALTHY'}
+                </div>
+            </div>
+
+            {/* Metrics grid */}
+            <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-6">
+                {/* Current equity */}
+                <div>
+                    <p className="text-[10px] text-muted uppercase tracking-wider mb-1">Current Equity</p>
+                    <p className="text-lg font-bold text-text-primary leading-tight">{formatCurrency(accountValue)}</p>
+                </div>
+
+                {/* Session P&L */}
+                <div>
+                    <p className="text-[10px] text-muted uppercase tracking-wider mb-1">Session P&L</p>
+                    <p className={`text-lg font-bold leading-tight ${sessionPnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                        {sessionPnl >= 0 ? '+' : ''}{formatCurrency(sessionPnl)}
+                    </p>
+                    <p className={`text-xs ${sessionPnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                        {sessionPnlPct >= 0 ? '+' : ''}{sessionPnlPct.toFixed(2)}%
+                    </p>
+                </div>
+
+                {/* Daily loss consumed */}
+                <div>
+                    <div className="flex justify-between items-center mb-1">
+                        <p className="text-[10px] text-muted uppercase tracking-wider">Daily Limit Used</p>
+                        <span className={`text-xs font-bold ${statusColor.icon}`}>{dailyPct.toFixed(1)}%</span>
+                    </div>
+                    <div className="w-full bg-overlay rounded-full h-1.5 mb-1">
+                        <div
+                            className={`h-1.5 rounded-full transition-all duration-700 ${statusColor.bar}`}
+                            style={{ width: `${dailyPct}%` }}
+                        />
+                    </div>
+                    <p className="text-[10px] text-muted">
+                        {formatCurrency(riskEngine.dailyLoss)} of {formatCurrency(riskEngine.dailyLossLimit)}
+                    </p>
+                </div>
+
+                {/* Reset countdown */}
+                <div>
+                    <p className="text-[10px] text-muted uppercase tracking-wider mb-1">Limit Resets In</p>
+                    <div className="flex items-baseline gap-1.5">
+                        <i className="fas fa-clock text-muted text-xs"></i>
+                        <p className="text-lg font-bold text-text-primary leading-tight">{timeToReset}</p>
+                    </div>
+                    <p className="text-[10px] text-muted">at midnight</p>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 // ── Prop-Firm Risk Engine ─────────────────────────────────────────────────────
 
@@ -224,6 +326,9 @@ const DashboardScreen: React.FC<{ setActiveScreen: (screen: Screen) => void; }> 
                     <StatCard title="NFINO Tokens (NXO)" value={portfolio.nxoBalance.toLocaleString()} icon="fa-coins" iconBg="bg-yellow-500" />
                     <StatCard title="Virtual Balance" value={formatCurrency(portfolio.virtualBalance)} icon="fa-money-bill-wave" iconBg="bg-green-500" />
                 </div>
+
+                {/* Account Health */}
+                <AccountHealthCard />
 
                 {/* Prop Firm Risk Engine */}
                 <RiskEnginePanel />

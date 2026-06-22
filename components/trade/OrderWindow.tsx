@@ -471,6 +471,19 @@ export const OrderWindow: React.FC<OrderWindowProps> = ({ stock, initialTransact
                                     </div>
                                 </div>
 
+                                {/* Position sizing */}
+                                {(() => {
+                                    const risk = portfolio.virtualBalance > 0 ? (marginRequired / portfolio.virtualBalance) * 100 : 0;
+                                    const riskClass = risk < 2 ? 'text-success' : risk <= 5 ? 'text-yellow-400' : 'text-danger';
+                                    const riskLabel = risk < 2 ? 'Low' : risk <= 5 ? 'Moderate' : 'High';
+                                    return (
+                                        <div className={`flex justify-between text-[10px] font-medium px-0.5 ${riskClass}`}>
+                                            <span>Position: <span className="font-bold">{risk.toFixed(1)}%</span> of account</span>
+                                            <span className="font-bold">{riskLabel} risk</span>
+                                        </div>
+                                    );
+                                })()}
+
                                 {/* Trigger Price */}
                                 {(orderType === OrderType.STOP_LOSS_MARKET || orderType.includes('STOP') || activeTab === 'Cover') && (
                                     <div>

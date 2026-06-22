@@ -66,58 +66,64 @@ const userPublic = (u: Awaited<ReturnType<typeof findUserById>>) => ({
 
 // POST /api/auth/register
 export const register = async (req: FastifyRequest, reply: FastifyReply) => {
-  let body: ReturnType<typeof registerSchema.parse>;
   try {
-    body = registerSchema.parse(req.body);
-  } catch (err) {
-    if (err instanceof ZodError) {
-      return reply.code(400).send({ error: 'Validation error', details: err.flatten().fieldErrors });
+    let body: ReturnType<typeof registerSchema.parse>;
+    try {
+      body = registerSchema.parse(req.body);
+    } catch (err) {
+      if (err instanceof ZodError) {
+        return reply.code(400).send({ error: 'Validation error', details: err.flatten().fieldErrors });
+      }
+      throw err;
     }
-    throw err;
+
+    if (await isUserIdTaken(body.userId)) {
+      return reply.code(409).send({ error: 'User ID is already taken. Please choose another.' });
+    }
+    if (await isEmailTaken(body.email)) {
+      return reply.code(409).send({ error: 'Email is already registered. Try logging in.' });
+    }
+
+    const passwordHash = await hashPassword(body.password);
+    const user = await createUser({
+      userId: body.userId,
+      email: body.email,
+      passwordHash,
+      displayName: body.displayName,
+    });
+
+    const accessToken = signAccessToken({
+      sub: user.id,
+      userId: user.user_id,
+      email: user.email,
+      role: user.role,
+    });
+
+    const refreshToken = generateRefreshToken();
+    await storeRefreshToken(user.id, refreshToken, req.ip, req.headers['user-agent'] ?? '');
+
+    reply.setCookie(REFRESH_COOKIE, refreshToken, cookieOptions());
+
+    createEmailVerificationToken(user.id)
+      .then((rawToken) => {
+        const base = env.FRONTEND_URL ?? env.CORS_ORIGIN;
+        const link = `${base}?verify_token=${rawToken}`;
+        return sendEmailVerificationEmail(user.email, link);
+      })
+      .catch(() => {});
+    sendWelcomeEmail(user.email, user.user_id).catch(() => {});
+    logAction(user.id, 'USER_REGISTERED', 'users', { userId: user.user_id }, req.ip);
+
+    return reply.code(201).send({
+      accessToken,
+      user: userPublic(user),
+    });
+  } catch (err) {
+    req.log.error({ err }, '[register] unexpected error');
+    if (!reply.sent) {
+      return reply.code(500).send({ error: 'Registration failed. Please try again.' });
+    }
   }
-
-  if (await isUserIdTaken(body.userId)) {
-    return reply.code(409).send({ error: 'User ID is already taken. Please choose another.' });
-  }
-  if (await isEmailTaken(body.email)) {
-    return reply.code(409).send({ error: 'Email is already registered. Try logging in.' });
-  }
-
-  const passwordHash = await hashPassword(body.password);
-  const user = await createUser({
-    userId: body.userId,
-    email: body.email,
-    passwordHash,
-    displayName: body.displayName,
-  });
-
-  const accessToken = signAccessToken({
-    sub: user.id,
-    userId: user.user_id,
-    email: user.email,
-    role: user.role,
-  });
-
-  const refreshToken = generateRefreshToken();
-  await storeRefreshToken(user.id, refreshToken, req.ip, req.headers['user-agent'] ?? '');
-
-  reply.setCookie(REFRESH_COOKIE, refreshToken, cookieOptions());
-
-  // Send verification + welcome emails concurrently (fire-and-forget)
-  createEmailVerificationToken(user.id)
-    .then((rawToken) => {
-      const base = env.FRONTEND_URL ?? env.CORS_ORIGIN;
-      const link = `${base}?verify_token=${rawToken}`;
-      return sendEmailVerificationEmail(user.email, link);
-    })
-    .catch(() => {});
-  sendWelcomeEmail(user.email, user.user_id).catch(() => {});
-  logAction(user.id, 'USER_REGISTERED', 'users', { userId: user.user_id }, req.ip);
-
-  return reply.code(201).send({
-    accessToken,
-    user: userPublic(user),
-  });
 };
 
 // POST /api/auth/login

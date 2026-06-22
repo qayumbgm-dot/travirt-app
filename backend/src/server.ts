@@ -9,6 +9,15 @@ import { startLimitOrderWorker } from './workers/limitOrder.worker';
 import { startDailyBonusWorker } from './workers/dailyBonus.worker';
 import { refreshInstruments, getInstrumentCount } from './services/instrumentMaster.service';
 
+// Prevent unhandled rejections / uncaught exceptions from killing the process.
+// All workers and hooks have .catch() but this is a final safety net.
+process.on('unhandledRejection', (reason) => {
+  console.error('[process] Unhandled rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[process] Uncaught exception:', err);
+});
+
 const start = async () => {
   console.log(`\n🚀 Starting TraVirt API [${env.NODE_ENV}]...\n`);
 

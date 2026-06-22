@@ -7,6 +7,7 @@ import { startGttWorker } from './workers/gtt.worker';
 import { startAlertWorker } from './workers/alert.worker';
 import { startLimitOrderWorker } from './workers/limitOrder.worker';
 import { startDailyBonusWorker } from './workers/dailyBonus.worker';
+import { refreshInstruments, getInstrumentCount } from './services/instrumentMaster.service';
 
 const start = async () => {
   console.log(`\n🚀 Starting TraVirt API [${env.NODE_ENV}]...\n`);
@@ -29,6 +30,32 @@ const start = async () => {
     console.error('❌ Migration failed:', err);
     process.exit(1);
   }
+
+  // ── Instrument master ─────────────────────────────────────────────────────
+  const existingCount = await getInstrumentCount();
+  if (existingCount < 100) {
+    console.log('📊 Downloading instrument master (first run)...');
+    const aliceToken = (env as any).ALICE_ACCESS_TOKEN;
+    refreshInstruments(aliceToken).catch(err =>
+      console.warn('[instruments] Background refresh failed:', err.message),
+    );
+  } else {
+    console.log(`✅ Instrument master ready: ${existingCount.toLocaleString()} instruments`);
+  }
+
+  // Refresh daily at 08:00 IST (02:30 UTC)
+  const msUntil0830IST = (() => {
+    const now  = new Date();
+    const next = new Date(now);
+    next.setUTCHours(2, 30, 0, 0);
+    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+    return next.getTime() - now.getTime();
+  })();
+  setTimeout(() => {
+    const aliceToken = (env as any).ALICE_ACCESS_TOKEN;
+    refreshInstruments(aliceToken).catch(console.error);
+    setInterval(() => refreshInstruments(aliceToken).catch(console.error), 24 * 60 * 60 * 1000);
+  }, msUntil0830IST);
 
   // ── Market data + background workers ─────────────────────────────────────
   await marketService.start();

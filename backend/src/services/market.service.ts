@@ -95,6 +95,31 @@ class MarketService extends EventEmitter {
     return map;
   }
 
+  getTick(exchange: string, symbol: string): MarketTick | undefined {
+    return this.prices.get(`${exchange}:${symbol}`);
+  }
+
+  // Subscribe to a live instrument by its Alice Blue token.
+  // In SIMULATION mode, seeds a synthetic tick for the token.
+  subscribeToken(token: string, exchange: string, symbol: string): void {
+    const key = `${exchange}:${symbol}`;
+    if (this.prices.has(key)) return; // already tracked
+
+    // Seed a default tick so the symbol appears immediately
+    const seed: MarketTick = {
+      symbol, exchange, ltp: 0, change: 0, changePercent: 0,
+      open: 0, high: 0, low: 0, prevClose: 0, volume: 0,
+    };
+    this.prices.set(key, seed);
+
+    if (this.mode === 'LIVE' && this.aliceWs?.readyState === 1) {
+      this.aliceWs.send(JSON.stringify({
+        type:       'subscribe',
+        instrument: `${exchange}|${token}`,
+      }));
+    }
+  }
+
   // ── Snapshot persistence ──────────────────────────────────────────────────
 
   private async loadSnapshotFromRedis(): Promise<void> {
@@ -168,11 +193,13 @@ class MarketService extends EventEmitter {
       this.aliceWs = ws;
 
       ws.on('open', () => {
+        // Use Keycloak JWT (ALICE_ACCESS_TOKEN) — falls back to old API key
+        const token = (env as any).ALICE_ACCESS_TOKEN ?? env.ALICE_API_KEY;
         ws.send(JSON.stringify({
           type:         'login',
           source:       'WebAPI',
           user_id:      env.ALICE_USER_ID,
-          access_token: env.ALICE_API_KEY,
+          access_token: token,
         }));
       });
 

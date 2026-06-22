@@ -90,7 +90,7 @@ export const routeToBroker = async (
 
   const req: AliceOrderRequest = {
     brokerUserId:    broker_user_id,
-    apiKey,
+    bearerToken:     apiKey,
     symbol:          trade.symbol,
     exchange:        trade.exchange,
     transactionType: trade.transactionType,

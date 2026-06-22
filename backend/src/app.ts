@@ -26,6 +26,7 @@ import { referralRoutes } from './api/routes/referral.routes';
 import { gttRoutes } from './api/routes/gtt.routes';
 import { alertRoutes } from './api/routes/alert.routes';
 import { brokerRoutes } from './api/routes/broker.routes';
+import instrumentRoutes from './api/routes/instruments.routes';
 import { pool } from './database/pool';
 import { redis } from './config/redis';
 import { recordRequest } from './services/metrics.service';
@@ -160,7 +161,8 @@ export const buildApp = async (): Promise<FastifyInstance> => {
       await api.register(referralRoutes,  { prefix: '/referrals' });
       await api.register(gttRoutes,       { prefix: '/gtt' });
       await api.register(alertRoutes,     { prefix: '/alerts' });
-      await api.register(brokerRoutes,    { prefix: '/broker' });
+      await api.register(brokerRoutes,       { prefix: '/broker' });
+      await api.register(instrumentRoutes,   { prefix: '/instruments' });
     },
     { prefix: '/api' },
   );

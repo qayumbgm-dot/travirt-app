@@ -1,7 +1,6 @@
 
 import React from 'react';
 import { usePortfolio } from '../contexts/PortfolioContext';
-import { PortfolioState } from '../types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { Screen } from '../App';
@@ -70,9 +69,13 @@ const getRuleStyle = (pct: number, isProfit = false) => {
     return { badge: 'bg-success/20 text-success', bar: 'bg-success', border: 'border-overlay', label: 'Safe' };
 };
 
-const RiskEnginePanel: React.FC<{ portfolio: PortfolioState }> = ({ portfolio }) => {
-    // Account size = cash + cost basis of open positions (what was funded)
-    const accountSize = portfolio.virtualBalance + portfolio.totalInvested;
+const RiskEnginePanel: React.FC = () => {
+    const { portfolio, riskEngine } = usePortfolio();
+
+    const accountSize  = portfolio.virtualBalance + portfolio.totalInvested;
+    const profitTarget = accountSize * 0.08;
+    const profit       = Math.max(0, portfolio.totalPnl);
+    const profitPct    = profitTarget > 0 ? Math.min((profit / profitTarget) * 100, 100) : 0;
 
     if (accountSize <= 0) {
         return (
@@ -88,17 +91,8 @@ const RiskEnginePanel: React.FC<{ portfolio: PortfolioState }> = ({ portfolio })
         );
     }
 
-    const dailyLossLimit  = accountSize * 0.05;
-    const maxDrawdownLimit = accountSize * 0.10;
-    const profitTarget     = accountSize * 0.08;
-
-    const dailyLoss = Math.max(0, -portfolio.todayPnl);
-    const drawdown  = Math.max(0, -portfolio.totalPnl);
-    const profit    = Math.max(0, portfolio.totalPnl);
-
-    const dailyLossPct  = Math.min((dailyLoss  / dailyLossLimit)   * 100, 100);
-    const drawdownPct   = Math.min((drawdown   / maxDrawdownLimit)  * 100, 100);
-    const profitPct     = Math.min((profit     / profitTarget)      * 100, 100);
+    const dailyLossPct = Math.min(riskEngine.dailyLossConsumedPct * 100, 100);
+    const drawdownPct  = Math.min(riskEngine.maxDrawdownConsumedPct * 100, 100);
 
     const rules: RiskRule[] = [
         {
@@ -106,16 +100,16 @@ const RiskEnginePanel: React.FC<{ portfolio: PortfolioState }> = ({ portfolio })
             description: 'Max 5% loss in a single day',
             icon: 'fas fa-calendar-day',
             usagePct: dailyLossPct,
-            usageLabel: `${formatCurrency(dailyLoss)} lost today`,
-            limitLabel: `Limit: ${formatCurrency(dailyLossLimit)}`,
+            usageLabel: `${formatCurrency(riskEngine.dailyLoss)} lost today`,
+            limitLabel: `Limit: ${formatCurrency(riskEngine.dailyLossLimit)}`,
         },
         {
             title: 'Max Drawdown',
-            description: 'Max 10% total drawdown allowed',
+            description: 'Max 10% drawdown from peak equity',
             icon: 'fas fa-level-down-alt',
             usagePct: drawdownPct,
-            usageLabel: `${formatCurrency(drawdown)} drawdown`,
-            limitLabel: `Limit: ${formatCurrency(maxDrawdownLimit)}`,
+            usageLabel: `${formatCurrency(riskEngine.drawdownAmount)} from peak`,
+            limitLabel: `Peak: ${formatCurrency(riskEngine.peakAccountValue)}`,
         },
         {
             title: 'Profit Target',
@@ -128,8 +122,8 @@ const RiskEnginePanel: React.FC<{ portfolio: PortfolioState }> = ({ portfolio })
         },
     ];
 
-    const anyBreach  = dailyLossPct >= 100 || drawdownPct >= 100;
-    const anyWarning = !anyBreach && (dailyLossPct >= 70 || drawdownPct >= 70);
+    const anyBreach  = riskEngine.dailyLossState === 'breached' || riskEngine.maxDrawdownState === 'breached';
+    const anyWarning = !anyBreach && (riskEngine.dailyLossState === 'warning' || riskEngine.maxDrawdownState === 'warning');
 
     return (
         <div className="bg-surface rounded-lg shadow-lg border border-overlay">
@@ -232,7 +226,7 @@ const DashboardScreen: React.FC<{ setActiveScreen: (screen: Screen) => void; }> 
                 </div>
 
                 {/* Prop Firm Risk Engine */}
-                <RiskEnginePanel portfolio={portfolio} />
+                <RiskEnginePanel />
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {/* Main Content: Positions & Movers */}

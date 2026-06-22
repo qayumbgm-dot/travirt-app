@@ -41,6 +41,12 @@ export const INITIAL_INR_BALANCE = 0;
 export const INITIAL_NXO_BALANCE = 0;
 export const INITIAL_VIRTUAL_BALANCE = 0;
 
+export const RISK_CONFIG = {
+  dailyLossLimitPct:   0.05,  // 5% of account size per day
+  maxDrawdownPct:      0.10,  // 10% from peak (high-water mark)
+  warningThresholdPct: 0.80,  // toast warning at 80% consumed
+} as const;
+
 export const MOCK_INDICES: OverviewAsset[] = [
     {
         symbol: 'NIFTY 50',

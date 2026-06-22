@@ -118,7 +118,7 @@ const MarketDepthContent: React.FC<MarketDepthContentProps> = ({
 
 
 export const OrderWindow: React.FC<OrderWindowProps> = ({ stock, initialTransactionType, initialOrderType, onClose }) => {
-    const { executeTrade, portfolio } = usePortfolio();
+    const { executeTrade, portfolio, riskEngine } = usePortfolio();
     const { showToast } = useToast();
     
     // --- State ---
@@ -540,14 +540,27 @@ export const OrderWindow: React.FC<OrderWindowProps> = ({ stock, initialTransact
                                 </div>
                             </div>
                             
-                            <div className="flex gap-2">
-                                <button form="order-form" type="submit" className={`flex-1 py-2 rounded font-bold text-white text-sm transition-transform active:scale-95 ${themeColor} ${themeHoverBg} hover:opacity-90 shadow-md`}>
-                                    {isBuy ? 'Buy' : 'Sell'}
-                                </button>
-                                <button onClick={onClose} className="flex-1 py-2 rounded font-bold text-text-secondary text-sm border border-overlay hover:bg-overlay transition-colors">
-                                    Cancel
-                                </button>
-                            </div>
+                            {/* Risk block banners — shown instead of the submit button */}
+                            {riskEngine.maxDrawdownState === 'breached' ? (
+                                <div className="flex items-start gap-2 bg-danger/10 border border-danger/30 rounded-lg p-3 text-sm text-danger">
+                                    <i className="fas fa-ban mt-0.5 shrink-0"></i>
+                                    <span>Max drawdown breached — all trading is halted. Close positions to reduce exposure.</span>
+                                </div>
+                            ) : (isBuy && riskEngine.dailyLossState === 'breached') ? (
+                                <div className="flex items-start gap-2 bg-danger/10 border border-danger/30 rounded-lg p-3 text-sm text-danger">
+                                    <i className="fas fa-calendar-times mt-0.5 shrink-0"></i>
+                                    <span>Daily loss limit reached — new positions are blocked until tomorrow.</span>
+                                </div>
+                            ) : (
+                                <div className="flex gap-2">
+                                    <button form="order-form" type="submit" className={`flex-1 py-2 rounded font-bold text-white text-sm transition-transform active:scale-95 ${themeColor} ${themeHoverBg} hover:opacity-90 shadow-md`}>
+                                        {isBuy ? 'Buy' : 'Sell'}
+                                    </button>
+                                    <button onClick={onClose} className="flex-1 py-2 rounded font-bold text-text-secondary text-sm border border-overlay hover:bg-overlay transition-colors">
+                                        Cancel
+                                    </button>
+                                </div>
+                            )}
 
                             {/* Advanced Toggle */}
                             {activeTab !== 'Quick' && (

@@ -1,16 +1,28 @@
 
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode, useCallback, useRef } from 'react';
 import { PortfolioState, Order, TransactionType, OrderType, OrderVariety, Stock, Transaction, GTTOrder, GTTStatus, GTTTriggerType, Alert, AlertStatus, MarketStatus } from '../types';
 import { useMarketData } from '../hooks/useMarketData';
 import { formatCurrency } from '../utils/formatters';
-import { INITIAL_INR_BALANCE, INITIAL_NXO_BALANCE, INITIAL_VIRTUAL_BALANCE } from '../constants';
+import { INITIAL_INR_BALANCE, INITIAL_NXO_BALANCE, INITIAL_VIRTUAL_BALANCE, RISK_CONFIG } from '../constants';
 import { portfolioApi, ApiPortfolio } from '../apiClient/portfolio.api';
 import { tradeApi } from '../apiClient/trade.api';
 import { fundsApi } from '../apiClient/funds.api';
 import { useToast } from './ToastContext';
 
+export interface RiskEngine {
+    dailyLossConsumedPct:   number;
+    maxDrawdownConsumedPct: number;
+    dailyLossState:   'safe' | 'warning' | 'breached';
+    maxDrawdownState: 'safe' | 'warning' | 'breached';
+    peakAccountValue: number;
+    dailyLoss:        number;
+    dailyLossLimit:   number;
+    drawdownAmount:   number;
+}
+
 interface PortfolioContextType {
     portfolio: PortfolioState;
+    riskEngine: RiskEngine;
     executeTrade: (order: Omit<Order, 'id' | 'timestamp' | 'status'>) => boolean;
     executeBracketOrder: (mainOrder: Omit<Order, 'id' | 'timestamp' | 'status'>, stopLossPrice: number, takeProfitPrice: number) => boolean;
     createGTT: (gttData: Omit<GTTOrder, 'id' | 'createdAt' | 'expiresAt' | 'status'>) => void;
@@ -109,7 +121,15 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
     const { marketData, loading: marketLoading, marketStatus, addInstruments } = useMarketData();
     const { showToast } = useToast();
     const [loading, setLoading] = useState(true);
-    const apiAvailable = useRef(true);
+    const apiAvailable   = useRef(true);
+    const warnedDailyRef    = useRef(false);
+    const warnedDrawdownRef = useRef(false);
+
+    const PEAK_KEY = 'travirt_peak_account_value';
+    const [peakAccountValue, setPeakAccountValue] = useState<number>(() => {
+        const stored = parseFloat(localStorage.getItem('travirt_peak_account_value') ?? '0');
+        return isNaN(stored) ? 0 : stored;
+    });
 
     const [portfolio, setPortfolio] = useState<PortfolioState>({
         inrBalance: INITIAL_INR_BALANCE,
@@ -190,10 +210,76 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
         return () => clearInterval(interval);
     }, [marketData, getStock]);
 
+    // ── Risk engine ───────────────────────────────────────────────────────────
+    const riskEngine = useMemo((): RiskEngine => {
+        const accountSize    = portfolio.virtualBalance + portfolio.totalInvested;
+        const accountValue   = portfolio.virtualBalance + portfolio.totalCurrentValue;
+        const dailyLossLimit = accountSize * RISK_CONFIG.dailyLossLimitPct;
+        const dailyLoss      = Math.max(0, -portfolio.todayPnl);
+        const drawdownAmount = Math.max(0, peakAccountValue - accountValue);
+
+        const dailyLossConsumedPct   = dailyLossLimit > 0 ? dailyLoss / dailyLossLimit : 0;
+        const maxDrawdownConsumedPct = peakAccountValue > 0
+            ? drawdownAmount / (peakAccountValue * RISK_CONFIG.maxDrawdownPct)
+            : 0;
+
+        const toState = (pct: number): 'safe' | 'warning' | 'breached' =>
+            pct >= 1 ? 'breached' : pct >= RISK_CONFIG.warningThresholdPct ? 'warning' : 'safe';
+
+        return {
+            dailyLossConsumedPct,
+            maxDrawdownConsumedPct,
+            dailyLossState:   accountSize > 0     ? toState(dailyLossConsumedPct)   : 'safe',
+            maxDrawdownState: peakAccountValue > 0 ? toState(maxDrawdownConsumedPct) : 'safe',
+            peakAccountValue,
+            dailyLoss,
+            dailyLossLimit,
+            drawdownAmount,
+        };
+    }, [portfolio.virtualBalance, portfolio.totalInvested, portfolio.totalCurrentValue, portfolio.todayPnl, peakAccountValue]);
+
+    // Update high-water mark whenever account value reaches a new high
+    useEffect(() => {
+        const accountValue = portfolio.virtualBalance + portfolio.totalCurrentValue;
+        if (accountValue > peakAccountValue) {
+            setPeakAccountValue(accountValue);
+            localStorage.setItem(PEAK_KEY, accountValue.toString());
+        }
+    }, [portfolio.virtualBalance, portfolio.totalCurrentValue, peakAccountValue]);
+
+    // Fire warning toasts exactly once when crossing 80% threshold
+    useEffect(() => {
+        const { dailyLossConsumedPct, maxDrawdownConsumedPct, dailyLossState, maxDrawdownState } = riskEngine;
+
+        if (dailyLossConsumedPct >= RISK_CONFIG.warningThresholdPct && dailyLossState !== 'breached' && !warnedDailyRef.current) {
+            warnedDailyRef.current = true;
+            showToast('Daily loss limit at 80% — trade with caution.', 'warning');
+        } else if (dailyLossConsumedPct < RISK_CONFIG.warningThresholdPct) {
+            warnedDailyRef.current = false;
+        }
+
+        if (maxDrawdownConsumedPct >= RISK_CONFIG.warningThresholdPct && maxDrawdownState !== 'breached' && !warnedDrawdownRef.current) {
+            warnedDrawdownRef.current = true;
+            showToast('Max drawdown at 80% — critical risk level.', 'warning');
+        } else if (maxDrawdownConsumedPct < RISK_CONFIG.warningThresholdPct) {
+            warnedDrawdownRef.current = false;
+        }
+    }, [riskEngine, showToast]);
+
     // ── Trade execution ───────────────────────────────────────────────────────
     const executeTrade = useCallback((order: Omit<Order, 'id' | 'timestamp' | 'status'>): boolean => {
         const stock = getStock(order.symbol, order.exchange);
         if (!stock) return false;
+
+        // Risk guards — check before any other validation
+        if (riskEngine.maxDrawdownState === 'breached') {
+            showToast('Max drawdown breached — all trading is halted.', 'error');
+            return false;
+        }
+        if (order.transactionType === TransactionType.BUY && riskEngine.dailyLossState === 'breached') {
+            showToast('Daily loss limit reached — new positions blocked until tomorrow.', 'error');
+            return false;
+        }
 
         const price = order.orderType === OrderType.LIMIT && order.price ? order.price : stock.ltp;
         const tradeValue = order.quantity * price;
@@ -272,7 +358,7 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
         }
 
         return true;
-    }, [getStock, portfolio.virtualBalance, portfolio.positions, setShowRefillPrompt, refetchPortfolio, showToast]);
+    }, [getStock, portfolio.virtualBalance, portfolio.positions, riskEngine, setShowRefillPrompt, refetchPortfolio, showToast]);
 
     const executeBracketOrder = useCallback((
         mainOrder: Omit<Order, 'id' | 'timestamp' | 'status'>,
@@ -431,7 +517,7 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
 
     return (
         <PortfolioContext.Provider value={{
-            portfolio, executeTrade, executeBracketOrder, createGTT, deleteGTT,
+            portfolio, riskEngine, executeTrade, executeBracketOrder, createGTT, deleteGTT,
             createAlert, deleteAlert, getStock, marketData, marketStatus,
             loading: loading || marketLoading, addInstruments, addInr, buyNfino, convertNfinoToVirtual,
             claimDailyBonus, addReward,

@@ -26,6 +26,7 @@
     "@fastify/rate-limit": "^9.1.0",
     "@fastify/websocket": "^8.3.1",
     "@google/genai": "^1.52.0",
+    "@sentry/node": "^10.59.0",
     "@types/qrcode": "^1.5.6",
     "bcryptjs": "^2.4.3",
     "fastify": "^4.26.0",

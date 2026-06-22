@@ -27,6 +27,7 @@ const schema = z.object({
   BROKER_ENCRYPTION_KEY: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
   // Brevo HTTP email API — preferred in production (Render blocks outbound SMTP).
   // When BREVO_API_KEY is set, email sends over HTTPS via Brevo instead of SMTP.
+  SENTRY_DSN:         z.string().url().optional(),
   BREVO_API_KEY:      z.string().optional(),
   BREVO_SENDER_EMAIL: z.string().optional(),  // a verified Brevo sender; falls back to SMTP_FROM
   BREVO_SENDER_NAME:  z.string().default('TraVirt'),

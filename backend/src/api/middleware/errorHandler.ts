@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/node';
 import type { FastifyError, FastifyRequest, FastifyReply } from 'fastify';
 
 export const errorHandler = (
@@ -16,7 +17,8 @@ export const errorHandler = (
     return;
   }
 
-  // Unhandled — log and return generic 500
+  // Unhandled — report to Sentry, log, and return generic 500
+  Sentry.captureException(error);
   console.error('[Unhandled error]', error);
   void reply.code(500).send({ error: 'Internal server error' });
 };

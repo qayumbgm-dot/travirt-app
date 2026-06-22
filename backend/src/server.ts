@@ -1,5 +1,13 @@
+import * as Sentry from '@sentry/node';
 import { buildApp } from './app';
 import { env } from './config/env';
+
+Sentry.init({
+  dsn: env.SENTRY_DSN,
+  environment: env.NODE_ENV,
+  tracesSampleRate: 0.1,
+  enabled: !!env.SENTRY_DSN,
+});
 import { pool } from './database/pool';
 import { runMigrations } from './database/migrate';
 import { marketService } from './services/market.service';
@@ -12,9 +20,11 @@ import { refreshInstruments, getInstrumentCount } from './services/instrumentMas
 // Prevent unhandled rejections / uncaught exceptions from killing the process.
 // All workers and hooks have .catch() but this is a final safety net.
 process.on('unhandledRejection', (reason) => {
+  Sentry.captureException(reason);
   console.error('[process] Unhandled rejection:', reason);
 });
 process.on('uncaughtException', (err) => {
+  Sentry.captureException(err);
   console.error('[process] Uncaught exception:', err);
 });
 

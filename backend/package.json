@@ -6,10 +6,10 @@
   "type": "commonjs",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "node --env-file=.env node_modules/tsx/dist/cli.mjs watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "migrate": "tsx src/database/migrate.ts",
+    "migrate": "node --env-file=.env node_modules/tsx/dist/cli.mjs src/database/migrate.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

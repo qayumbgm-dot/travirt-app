@@ -1,11 +1,19 @@
-// Alice Blue ANT API — order placement only.
-// Market data uses the shared WebSocket in market.service.ts (not this file).
+// Alice Blue ANT API — order placement and account data.
+// Auth: Keycloak JWT Bearer token (ALICE_ACCESS_TOKEN in env).
+// Confirmed working endpoints (2026-06-22):
+//   GET  /api/customer/accountDetails   — profile
+//   GET  /api/limits/getRmsLimits       — margin / funds
+//   GET  /api/placeOrder/fetchOrderBook — order history
+//   GET  /api/placeOrder/fetchTradeBook — trade history
+//   POST /api/placeOrder/executePlaceOrder — place order
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { env } from '../config/env';
 
-// ─── Credential encryption (AES-256-GCM) ─────────────────────────────────────
-// Stored as "{iv_hex}:{auth_tag_hex}:{ciphertext_hex}"
+const ALICE_API_BASE = 'https://ant.aliceblueonline.com/rest/AliceBlueAPIService/api';
+
+// ─── Credential encryption (AES-256-GCM) ────────────────────────────────────
+// User broker API keys are stored encrypted in the DB as "{iv}:{tag}:{ciphertext}"
 
 const getEncryptionKey = (): Buffer | null => {
   if (!env.BROKER_ENCRYPTION_KEY) return null;
@@ -15,7 +23,7 @@ const getEncryptionKey = (): Buffer | null => {
 export const encryptApiKey = (plaintext: string): string => {
   const key = getEncryptionKey();
   if (!key) throw new Error('BROKER_ENCRYPTION_KEY is not configured');
-  const iv     = randomBytes(12); // 96-bit IV for GCM
+  const iv     = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
   const enc    = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const tag    = cipher.getAuthTag();
@@ -35,19 +43,65 @@ export const decryptApiKey = (stored: string): string => {
 
 export const isBrokerEncryptionConfigured = (): boolean => Boolean(env.BROKER_ENCRYPTION_KEY);
 
-// ─── Order placement types ────────────────────────────────────────────────────
+// ─── Platform session token ──────────────────────────────────────────────────
+// The platform's own Alice Blue JWT (ALICE_ACCESS_TOKEN) is used for
+// market data and admin-level queries. Individual user tokens are stored
+// in broker_connections (encrypted) and passed in per-request.
+
+export const getPlatformToken = (): string | null =>
+  (env as any).ALICE_ACCESS_TOKEN ?? null;
+
+// ─── Account info ───────────────────────────────────────────────────────────
+
+export interface AliceAccountDetails {
+  accountStatus: string;
+  accountId:     string;
+  accountName:   string;
+  exchEnabled:   string;
+  product:       string[];
+}
+
+export const fetchAccountDetails = async (bearerToken: string): Promise<AliceAccountDetails | null> => {
+  try {
+    const resp = await fetch(`${ALICE_API_BASE}/customer/accountDetails`, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+      signal:  AbortSignal.timeout(8_000),
+    });
+    if (!resp.ok) return null;
+    return await resp.json() as AliceAccountDetails;
+  } catch {
+    return null;
+  }
+};
+
+// ─── Funds / margin ─────────────────────────────────────────────────────────
+
+export const fetchRmsLimits = async (bearerToken: string): Promise<unknown | null> => {
+  try {
+    const resp = await fetch(`${ALICE_API_BASE}/limits/getRmsLimits`, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+      signal:  AbortSignal.timeout(8_000),
+    });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
+};
+
+// ─── Order placement types ───────────────────────────────────────────────────
 
 export interface AliceOrderRequest {
+  bearerToken:     string;
   brokerUserId:    string;
-  apiKey:          string;         // decrypted bearer token
-  symbol:          string;         // e.g. "RELIANCE"
-  exchange:        string;         // "NSE" | "BSE" | "NFO" | "MCX"
+  symbol:          string;
+  exchange:        string;
   transactionType: 'BUY' | 'SELL';
   orderType:       'MARKET' | 'LIMIT' | 'SL' | 'SLM';
   quantity:        number;
-  price:           number;         // 0 for MARKET orders
+  price:           number;
   triggerPrice?:   number;
-  productType?:    string;         // "MIS" (intraday) | "CNC" (delivery) | "NRML"
+  productType?:    string;
 }
 
 export interface AliceOrderResult {
@@ -56,15 +110,13 @@ export interface AliceOrderResult {
   error:         string | null;
 }
 
-// ─── Alice Blue ANT API endpoint ──────────────────────────────────────────────
-
-const ALICE_API_BASE = 'https://ant.aliceblueonline.com/rest/AliceBlueAPIService/api';
-
 interface AliceApiResponse {
-  stat:   string;        // "Ok" | "Not_Ok"
-  NOrdNo?: string;       // order number on success
-  emsg?:  string;        // error message on failure
+  stat:    string;
+  NOrdNo?: string;
+  emsg?:   string;
 }
+
+// ─── Place order ─────────────────────────────────────────────────────────────
 
 export const placeAliceOrder = async (req: AliceOrderRequest): Promise<AliceOrderResult> => {
   try {
@@ -76,7 +128,7 @@ export const placeAliceOrder = async (req: AliceOrderRequest): Promise<AliceOrde
     const body = {
       userId:          req.brokerUserId,
       orderType:       'REGULAR',
-      instrumentToken: req.symbol,     // Alice Blue accepts symbol name for most instruments
+      instrumentToken: req.symbol,
       exchange:        req.exchange,
       transactionType: req.transactionType,
       productType:     req.productType ?? 'MIS',
@@ -91,11 +143,11 @@ export const placeAliceOrder = async (req: AliceOrderRequest): Promise<AliceOrde
     const resp = await fetch(`${ALICE_API_BASE}/placeOrder/executePlaceOrder`, {
       method:  'POST',
       headers: {
-        'Authorization': `Bearer ${req.apiKey}`,
-        'Content-Type':  'application/json',
-        'User-Agent':    'TraVirt/1.0',
+        Authorization:  `Bearer ${req.bearerToken}`,
+        'Content-Type': 'application/json',
+        'User-Agent':   'TraVirt/1.0',
       },
-      body:   JSON.stringify([body]),   // ANT API expects an array
+      body:   JSON.stringify([body]),
       signal: AbortSignal.timeout(10_000),
     });
 

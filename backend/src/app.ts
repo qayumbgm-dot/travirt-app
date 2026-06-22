@@ -46,6 +46,8 @@ export const buildApp = async (): Promise<FastifyInstance> => {
 
   // ── Security headers ──────────────────────────────────────────────────────
   await app.register(helmet, {
+    // API is consumed cross-origin — allow subresource fetch from any origin
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
     // CSP is enforced in production; disabled in dev to allow Vite HMR / inline scripts
     contentSecurityPolicy: env.NODE_ENV === 'production' ? {
       directives: {

@@ -19,6 +19,12 @@ export type LoginResult =
 
 const extractMessage = (err: unknown): string => {
   const data = (err as any)?.response?.data;
+  if (data?.details) {
+    const fieldErrors = Object.values(data.details as Record<string, string[]>)
+      .flat()
+      .filter(Boolean);
+    if (fieldErrors.length) return fieldErrors[0] as string;
+  }
   return data?.error ?? data?.message ?? 'Something went wrong. Please try again.';
 };
 

@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+backend/node_modules/
+
+# Build outputs
+dist/
+backend/dist/
+
+# Environment secrets — NEVER commit these
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+.idea/
+
+# Test artifacts
+coverage/
+backend/coverage/
+playwright-report/
+test-results/
+
+# Backup archives
+backups/
+*.tar.gz
+*.gz
+
+# Playwright auth state (contains tokens — never commit)
+.playwright/
+
+# Temporary
+tmp/

@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Backend: typecheck + unit tests ────────────────────────────────────────
+  backend:
+    name: Backend (typecheck + tests)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: travirt_test
+          POSTGRES_USER: travirt
+          POSTGRES_PASSWORD: travirt_pass
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U travirt"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        env:
+          DATABASE_URL: postgresql://travirt:travirt_pass@localhost:5432/travirt_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: ci_jwt_secret_at_least_32_chars_long_enough
+          NODE_ENV: test
+        run: npm test -- --reporter=verbose
+
+      - name: Coverage report
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          DATABASE_URL: postgresql://travirt:travirt_pass@localhost:5432/travirt_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: ci_jwt_secret_at_least_32_chars_long_enough
+          NODE_ENV: test
+        run: npm run test:coverage
+
+  # ── Frontend: typecheck + build ─────────────────────────────────────────────
+  frontend:
+    name: Frontend (typecheck + build)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        env:
+          VITE_API_URL: http://localhost:3001
+        run: npm run build
+
+      - name: Upload build artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/
+          retention-days: 7
+
+  # ── E2E smoke tests (on main only to save CI minutes) ───────────────────────
+  e2e:
+    name: E2E smoke (Chromium)
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    if: github.ref == 'refs/heads/main'
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: travirt_e2e
+          POSTGRES_USER: travirt
+          POSTGRES_PASSWORD: travirt_pass
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U travirt"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 10s
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Run backend migrations
+        env:
+          DATABASE_URL: postgresql://travirt:travirt_pass@localhost:5432/travirt_e2e
+        run: npm run migrate
+        working-directory: backend
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        env:
+          DATABASE_URL: postgresql://travirt:travirt_pass@localhost:5432/travirt_e2e
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: ci_jwt_secret_at_least_32_chars_long_enough
+          NODE_ENV: test
+          VITE_API_URL: http://localhost:3001
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

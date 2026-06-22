@@ -1,0 +1,30 @@
+# TraVirt PostgreSQL backup cron schedule
+#
+# Install:
+#   sudo cp deploy/backup.cron /etc/cron.d/travirt-backup
+#   sudo chown root:root /etc/cron.d/travirt-backup
+#   sudo chmod 644 /etc/cron.d/travirt-backup
+#
+# Runs as the 'travirt' system user so it inherits the correct env.
+# The EnvironmentFile (/opt/travirt/backend/.env) is sourced manually in
+# backup.sh by reading DATABASE_URL — cron does not auto-source systemd env files.
+#
+# Timing: 02:00 IST = 20:30 UTC (safely after midnight IST daily bonus reset)
+#
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+# ── Daily backup at 02:00 IST (20:30 UTC) ────────────────────────────────────
+30 20 * * * travirt \
+  source /opt/travirt/backend/.env 2>/dev/null; \
+  /opt/travirt/deploy/backup.sh >> /var/log/travirt/backup.log 2>&1
+
+# ── Weekly integrity check: verify the most recent backup is readable ─────────
+0 21 * * 0 travirt \
+  LATEST=$(ls -t /var/backups/travirt/travirt_pg_*.sql.gz 2>/dev/null | head -1); \
+  if [[ -n "$LATEST" ]]; then \
+    gunzip --test "$LATEST" && \
+    echo "[$(date -u)] Backup integrity OK: $LATEST" >> /var/log/travirt/backup.log || \
+    echo "[$(date -u)] ERROR: Backup integrity FAILED: $LATEST" >> /var/log/travirt/backup.log; \
+  fi

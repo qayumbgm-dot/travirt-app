@@ -1,0 +1,12 @@
+# Normalize line endings to LF in the repo; Git converts to CRLF on Windows checkout
+* text=auto eol=lf
+
+# Force binary files to not be touched
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary

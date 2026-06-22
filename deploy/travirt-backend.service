@@ -1,0 +1,56 @@
+# /etc/systemd/system/travirt-backend.service
+#
+# Install:
+#   sudo cp deploy/travirt-backend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now travirt-backend
+#
+# Manage:
+#   sudo systemctl status travirt-backend
+#   sudo journalctl -u travirt-backend -f
+
+[Unit]
+Description=TraVirt API Server (Fastify)
+Documentation=https://github.com/yourorg/travirt
+After=network.target postgresql.service redis.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=travirt
+Group=travirt
+WorkingDirectory=/opt/travirt/backend
+
+# Environment file — never store secrets in this unit file
+EnvironmentFile=/opt/travirt/backend/.env
+
+# Production binary
+ExecStart=/usr/bin/node dist/server.js
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=512M
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/travirt/backend /var/log/travirt
+ProtectHome=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=travirt-backend
+
+[Install]
+WantedBy=multi-user.target

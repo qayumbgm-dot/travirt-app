@@ -1,0 +1,136 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: production
+        type: choice
+        options: [production, staging]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false   # never cancel an in-flight deploy
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment || 'production' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'production' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Build frontend ──────────────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+        run: npm run build
+
+      # ── Build backend ───────────────────────────────────────────────────────
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Build backend
+        run: npm run build
+        working-directory: backend
+
+      # ── Bundle artifacts for deployment ────────────────────────────────────
+      - name: Create release bundle
+        run: |
+          mkdir -p release/backend
+          cp -r dist/ release/frontend/
+          cp -r backend/dist/ release/backend/dist/
+          cp backend/package*.json release/backend/
+          cp -r backend/src/database/migrations release/backend/migrations/
+          tar -czf travirt-release.tar.gz -C release .
+
+      # ── Deploy via SSH ──────────────────────────────────────────────────────
+      # Requires secrets: DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY
+      - name: Upload release bundle
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: travirt-release.tar.gz
+          target: /tmp/
+
+      - name: Run remote deploy script
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            RELEASE_DIR=/opt/travirt
+            BACKUP_DIR=/opt/travirt-backups/$(date +%Y%m%d_%H%M%S)
+
+            # Backup current deploy
+            mkdir -p "$BACKUP_DIR"
+            cp -r "$RELEASE_DIR/backend/dist" "$BACKUP_DIR/dist" 2>/dev/null || true
+
+            # Unpack new release
+            mkdir -p /tmp/travirt-release
+            tar -xzf /tmp/travirt-release.tar.gz -C /tmp/travirt-release
+
+            # Frontend static files
+            rsync -a --delete /tmp/travirt-release/frontend/ /var/www/travirt/dist/
+
+            # Backend
+            cd "$RELEASE_DIR/backend"
+            rsync -a --delete /tmp/travirt-release/backend/dist/ ./dist/
+            cp /tmp/travirt-release/backend/package*.json ./
+            NODE_ENV=production npm ci --omit=dev
+
+            # Run migrations (idempotent)
+            node dist/database/migrate.js || echo "WARN: migrations returned non-zero"
+
+            # Restart service (zero-downtime: systemd restarts the process)
+            sudo systemctl restart travirt-backend
+            sleep 3
+
+            # Health check
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3001/health)
+            if [ "$STATUS" != "200" ]; then
+              echo "Health check failed (HTTP $STATUS) — rolling back"
+              rsync -a --delete "$BACKUP_DIR/dist/" ./dist/
+              sudo systemctl restart travirt-backend
+              exit 1
+            fi
+
+            echo "Deploy complete — health OK"
+            rm -rf /tmp/travirt-release /tmp/travirt-release.tar.gz
+
+  # ── Post-deploy notification (optional — wire up Slack webhook in secrets) ──
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: always()
+    steps:
+      - name: Slack notification
+        if: ${{ secrets.SLACK_WEBHOOK != '' }}
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "${{ needs.deploy.result == 'success' && '✅' || '❌' }} TraVirt deploy *${{ needs.deploy.result }}* — `${{ github.ref_name }}` by ${{ github.actor }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

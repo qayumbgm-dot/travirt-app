@@ -48,8 +48,8 @@ const REFRESH_COOKIE = 'refresh_token';
 
 const cookieOptions = () => ({
   httpOnly: true,
-  secure: env.NODE_ENV === 'production',
-  sameSite: 'strict' as const,
+  secure: true,
+  sameSite: 'none' as const,
   path: '/',
   maxAge: env.REFRESH_TOKEN_EXPIRES_DAYS * 24 * 60 * 60,  // seconds
 });

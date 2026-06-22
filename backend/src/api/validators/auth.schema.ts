@@ -3,9 +3,10 @@ import { z } from 'zod';
 export const registerSchema = z.object({
   userId: z
     .string()
-    .min(4, 'User ID must be at least 4 characters')
+    .min(8, 'User ID must be at least 8 characters')
     .max(20, 'User ID must be at most 20 characters')
-    .regex(/^[A-Za-z0-9_]+$/, 'Only letters, numbers, and underscores allowed'),
+    .regex(/[A-Z]/, 'User ID must contain at least one uppercase letter')
+    .regex(/[0-9]/, 'User ID must contain at least one number'),
   email: z.string().email('Invalid email address'),
   password: z
     .string()

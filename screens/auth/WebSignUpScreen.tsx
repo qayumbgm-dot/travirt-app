@@ -103,7 +103,7 @@ const WebSignUpScreen: React.FC<WebSignUpScreenProps> = ({ onLoginSuccess, onLog
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
-                <Field label="User ID *" hint="4–20 chars. Letters, numbers, underscores only.">
+                <Field label="User ID *" hint="Min 8 chars · 1 uppercase · 1 number · Any characters allowed">
                     <input
                         type="text"
                         value={form.userId}

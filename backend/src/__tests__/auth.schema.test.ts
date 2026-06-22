@@ -3,27 +3,36 @@ import { registerSchema, loginSchema } from '../api/validators/auth.schema';
 
 describe('registerSchema', () => {
   const VALID = {
-    userId: 'TESTER1',
+    userId: 'TESTER01',
     email: 'test@example.com',
     password: 'Password1',
   };
 
   it('accepts a valid registration payload', () => {
     const result = registerSchema.parse(VALID);
-    expect(result.userId).toBe('TESTER1');
+    expect(result.userId).toBe('TESTER01');
     expect(result.email).toBe('test@example.com');
   });
 
-  it('rejects a user ID shorter than 4 characters', () => {
-    expect(() => registerSchema.parse({ ...VALID, userId: 'AB' })).toThrow();
+  it('accepts a user ID with special characters', () => {
+    const result = registerSchema.parse({ ...VALID, userId: 'Test@1234' });
+    expect(result.userId).toBe('Test@1234');
+  });
+
+  it('rejects a user ID shorter than 8 characters', () => {
+    expect(() => registerSchema.parse({ ...VALID, userId: 'TEST1' })).toThrow();
   });
 
   it('rejects a user ID longer than 20 characters', () => {
-    expect(() => registerSchema.parse({ ...VALID, userId: 'A'.repeat(21) })).toThrow();
+    expect(() => registerSchema.parse({ ...VALID, userId: 'A1'.repeat(11) })).toThrow();
   });
 
-  it('rejects a user ID with special characters', () => {
-    expect(() => registerSchema.parse({ ...VALID, userId: 'BAD USER!' })).toThrow();
+  it('rejects a user ID without an uppercase letter', () => {
+    expect(() => registerSchema.parse({ ...VALID, userId: 'tester01' })).toThrow();
+  });
+
+  it('rejects a user ID without a number', () => {
+    expect(() => registerSchema.parse({ ...VALID, userId: 'TESTERXX' })).toThrow();
   });
 
   it('rejects an invalid email', () => {

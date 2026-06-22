@@ -59,9 +59,9 @@ export const createUser = async (params: {
     );
     const user = userResult.rows[0];
 
-    // Seed portfolio balances (empty wallet to start)
+    // Seed portfolio with ₹10,00,000 virtual balance — enough to trade any NSE/BSE stock
     await client.query(
-      'INSERT INTO portfolio_balances (user_id) VALUES ($1)',
+      'INSERT INTO portfolio_balances (user_id, virtual_balance) VALUES ($1, 1000000.00)',
       [user.id],
     );
 

@@ -1,11 +1,15 @@
 import { Pool } from 'pg';
 import { env } from '../config/env';
 
-// Add connect_timeout=10 so the PostgreSQL socket-level handshake fails fast
-// instead of hanging until Render's proxy closes the HTTP connection.
-const dbUrl = env.DATABASE_URL.includes('connect_timeout')
-  ? env.DATABASE_URL
-  : env.DATABASE_URL + (env.DATABASE_URL.includes('?') ? '&' : '?') + 'connect_timeout=10';
+// Add connect_timeout=10 and client_encoding=UTF8 so the socket handshake
+// fails fast and the pg client always negotiates UTF-8 with Neon (without
+// this, non-ASCII characters like ₹ and × are decoded as Windows-1252).
+const addParam = (url: string, param: string) =>
+  url + (url.includes('?') ? '&' : '?') + param;
+
+let dbUrl = env.DATABASE_URL;
+if (!dbUrl.includes('connect_timeout'))  dbUrl = addParam(dbUrl, 'connect_timeout=10');
+if (!dbUrl.includes('client_encoding'))  dbUrl = addParam(dbUrl, 'client_encoding=UTF8');
 
 export const pool = new Pool({
   connectionString: dbUrl,

@@ -21,6 +21,7 @@ interface PortfolioContextType {
     marketData: Stock[];
     marketStatus: MarketStatus;
     loading: boolean;
+    addInstruments: (stocks: Stock[]) => void;
     addInr: (amount: number) => void;
     buyNfino: (inrAmount: number) => boolean;
     convertNfinoToVirtual: (nxoAmount: number) => boolean;
@@ -105,7 +106,7 @@ const mapApiPortfolio = (api: ApiPortfolio): Partial<PortfolioState> => ({
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPrompt: (show: boolean) => void }> = ({ children, setShowRefillPrompt }) => {
-    const { marketData, loading: marketLoading, marketStatus } = useMarketData();
+    const { marketData, loading: marketLoading, marketStatus, addInstruments } = useMarketData();
     const { showToast } = useToast();
     const [loading, setLoading] = useState(true);
     const apiAvailable = useRef(true);
@@ -432,7 +433,7 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
         <PortfolioContext.Provider value={{
             portfolio, executeTrade, executeBracketOrder, createGTT, deleteGTT,
             createAlert, deleteAlert, getStock, marketData, marketStatus,
-            loading: loading || marketLoading, addInr, buyNfino, convertNfinoToVirtual,
+            loading: loading || marketLoading, addInstruments, addInr, buyNfino, convertNfinoToVirtual,
             claimDailyBonus, addReward,
         }}>
             {children}

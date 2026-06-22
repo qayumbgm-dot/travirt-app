@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: travirt-api
+    runtime: node
+    rootDir: backend
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: DATABASE_URL
+        sync: false          # Set in Render dashboard → Environment
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true  # Render auto-generates a random secret
+      - key: REFRESH_TOKEN_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 15m
+      - key: REFRESH_TOKEN_EXPIRES_DAYS
+        value: 30
+      - key: CORS_ORIGIN
+        sync: false          # Set to your Vercel URL after deploy
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      # Alice Blue — leave blank in beta (virtual-only mode)
+      - key: ALICE_USER_ID
+        value: ""
+      - key: ALICE_API_KEY
+        value: ""
+      - key: ALICE_ACCESS_TOKEN
+        value: ""
+      # Stripe — leave blank in beta (billing UI hidden)
+      - key: STRIPE_SECRET_KEY
+        value: ""
+      - key: STRIPE_WEBHOOK_SECRET
+        value: ""
+      - key: STRIPE_PRICE_PRO
+        value: ""
+      - key: STRIPE_PRICE_ELITE
+        value: ""

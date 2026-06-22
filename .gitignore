@@ -14,7 +14,10 @@ backend/.env
 
 # Logs
 *.log
+*.err
 npm-debug.log*
+logs/
+backend/logs/
 
 # Editor / OS
 .DS_Store

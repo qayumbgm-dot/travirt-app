@@ -10,6 +10,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "migrate": "node --env-file=.env node_modules/tsx/dist/cli.mjs src/database/migrate.ts",
+    "seed": "node --env-file=.env node_modules/tsx/dist/cli.mjs src/database/seed.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

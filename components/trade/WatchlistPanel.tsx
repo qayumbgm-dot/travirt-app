@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Stock, WatchlistGroup, TransactionType, OrderType, WatchlistSettings, SortByType, Watchlist, InstrumentType } from '../../types';
 import { useWatchlist } from '../../contexts/WatchlistContext';
@@ -7,6 +7,7 @@ import { usePortfolio } from '../../contexts/PortfolioContext';
 import { useToast } from '../../contexts/ToastContext';
 import { MoreOptionsMenu } from './MoreOptionsMenu';
 import { formatCurrency, getInstrumentKey, parseInstrumentKey } from '../../utils/formatters';
+import { instrumentsApi, instrumentResultToStock } from '../../api/instruments.api';
 
 // Modular Imports
 import Tooltip from '../common/Tooltip';
@@ -302,7 +303,7 @@ const StandardWatchlistWrapper: React.FC<WatchlistPanelProps> = ({ activeList, i
     const [activeGroupMenu, setActiveGroupMenu] = useState<string | null>(null);
 
     const { addStockToGroup, removeStockFromGroup, reorderStockInGroup, reorderGroups, toggleGroupCollapse, toggleGroupMaximize, updateGroup, addGroup, pinStock, removeGroup, activeGroupIds, setActiveGroup, updateWatchlistSettings, sortAllAssetsInWatchlist, addWatchlistFromDiscover } = useWatchlist();
-    const { marketData, loading: marketLoading, portfolio } = usePortfolio();
+    const { marketData, loading: marketLoading, portfolio, addInstruments } = usePortfolio();
     
     const activeGroupId = activeGroupIds[activeList.id] || (activeList.groups.length > 0 ? activeList.groups[0].id : null);
 
@@ -398,18 +399,30 @@ const StandardWatchlistWrapper: React.FC<WatchlistPanelProps> = ({ activeList, i
 
     // Derived Data
     const watchlistKeys = useMemo(() => new Set(activeList.groups.flatMap(g => g.symbols)), [activeList]);
-    
-    const searchResults = useMemo(() => {
-        if (!query) return [];
-        const lowerCaseQuery = query.toLowerCase();
-        
-        // Filter market data to find matches not already in watchlist (by composite key)
-        return marketData.filter(s => {
-            const key = getInstrumentKey(s);
-            if (watchlistKeys.has(key)) return false;
-            return s.symbol.toLowerCase().includes(lowerCaseQuery) || s.name.toLowerCase().includes(lowerCaseQuery);
-        }).slice(0, 100); // Increased limit to 100 for extensive results
-    }, [marketData, query, watchlistKeys]);
+
+    const [searchResults, setSearchResults] = useState<Stock[]>([]);
+    const [searchLoading, setSearchLoading] = useState(false);
+
+    useEffect(() => {
+        if (!query || query.length < 1 || isDiscover) {
+            setSearchResults([]);
+            return;
+        }
+        setSearchLoading(true);
+        const timer = setTimeout(async () => {
+            try {
+                const results = await instrumentsApi.search(query, undefined, 30);
+                const stocks = results.map(instrumentResultToStock);
+                addInstruments(stocks);
+                setSearchResults(stocks.filter(s => !watchlistKeys.has(getInstrumentKey(s))));
+            } catch {
+                setSearchResults([]);
+            } finally {
+                setSearchLoading(false);
+            }
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [query, isDiscover, watchlistKeys, addInstruments]);
     
     const scrollToTop = () => scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     const scrollToBottom = () => scrollContainerRef.current?.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' });
@@ -458,19 +471,30 @@ const StandardWatchlistWrapper: React.FC<WatchlistPanelProps> = ({ activeList, i
                         
                         {query && !isDiscover && (
                             <div ref={searchResultsRef} className="absolute top-full left-0 right-0 mt-1 bg-base border border-overlay rounded-md shadow-lg z-20 max-h-96 overflow-y-auto custom-scrollbar">
-                                {searchResults.length > 0 ? (
+                                {searchLoading ? (
+                                    <p className="p-3 text-sm text-center text-muted">
+                                        <i className="fas fa-circle-notch fa-spin mr-2"></i>Searching 1,46,623 instruments...
+                                    </p>
+                                ) : searchResults.length > 0 ? (
                                     searchResults.map(stock => (
                                         <div key={getInstrumentKey(stock)} className="p-2 hover:bg-overlay flex items-center justify-between">
-                                            <div className="flex items-center gap-2">
-                                                <div>
-                                                    <p className="font-semibold text-sm">{stock.symbol}</p>
-                                                    <p className="text-xs text-muted">{stock.name}</p>
+                                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                <div className="min-w-0">
+                                                    <p className="font-semibold text-sm truncate">{stock.symbol}</p>
+                                                    <p className="text-xs text-muted truncate">{stock.name}</p>
                                                 </div>
-                                                <span className="text-[10px] bg-primary/20 text-primary px-1 rounded font-bold">{stock.exchange}</span>
+                                                <div className="flex items-center gap-1 shrink-0">
+                                                    <span className="text-[10px] bg-primary/20 text-primary px-1 rounded font-bold">{stock.exchange}</span>
+                                                    {stock.instrumentType && stock.instrumentType !== InstrumentType.EQUITY && (
+                                                        <span className="text-[10px] bg-overlay text-muted px-1 rounded font-bold uppercase">
+                                                            {stock.instrumentType === InstrumentType.OPTION ? (stock.optionType ?? 'OPT') : stock.instrumentType}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
                                             <Tooltip title={activeGroupId ? `Add to '${activeList.groups.find(g => g.id === activeGroupId)?.name}'` : 'Select a group first'}>
                                                 <div>
-                                                    <button 
+                                                    <button
                                                         onClick={() => {
                                                             if (activeGroupId) {
                                                                 addStockToGroup(activeList.id, activeGroupId, getInstrumentKey(stock));
@@ -478,7 +502,7 @@ const StandardWatchlistWrapper: React.FC<WatchlistPanelProps> = ({ activeList, i
                                                             }
                                                         }}
                                                         disabled={!activeGroupId}
-                                                        className="text-primary text-xl hover:text-primary-focus disabled:text-muted disabled:cursor-not-allowed"
+                                                        className="text-primary text-xl hover:text-primary-focus disabled:text-muted disabled:cursor-not-allowed ml-2"
                                                     >
                                                         <i className="fas fa-plus-circle"></i>
                                                     </button>

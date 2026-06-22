@@ -59,6 +59,19 @@ export const useMarketData = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [marketStatus, setMarketStatus] = useState<MarketStatus>('CONNECTING');
 
+  // Pre-seed marketData with instrument metadata from search results so that
+  // when WS ticks arrive for newly-subscribed instruments they find a home.
+  const addInstruments = useCallback((newStocks: Stock[]) => {
+    setMarketData(prev => {
+      const existingKeys = new Set(prev.map(s => `${s.exchange}:${s.symbol}`));
+      const toAdd = newStocks.filter(s => !existingKeys.has(`${s.exchange}:${s.symbol}`));
+      if (toAdd.length === 0) return prev;
+      const updated = [...prev, ...toAdd];
+      marketDataRef.current = updated;
+      return updated;
+    });
+  }, []);
+
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mockTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -132,12 +145,22 @@ export const useMarketData = () => {
         } else if (msg.type === 'tick') {
           const tick = msg.data;
           setMarketData((prev) => {
-            const updated = prev.map((s) => {
-              if (s.symbol === tick.symbol && s.exchange === tick.exchange) {
-                return buildStockFromTick(tick, s);
-              }
-              return s;
-            });
+            const idx = prev.findIndex(s => s.symbol === tick.symbol && s.exchange === tick.exchange);
+            if (idx >= 0) {
+              const updated = [...prev];
+              updated[idx] = buildStockFromTick(tick, prev[idx]);
+              marketDataRef.current = updated;
+              return updated;
+            }
+            // Instrument not yet in marketData (subscribed on-demand) — add it
+            const newStock: Stock = {
+              symbol: tick.symbol, exchange: tick.exchange, name: tick.symbol,
+              ltp: tick.ltp ?? 0, open: tick.open ?? 0, high: tick.high ?? 0,
+              low: tick.low ?? 0, prevClose: tick.prevClose ?? 0,
+              change: tick.change ?? 0, changePercent: tick.changePercent ?? 0,
+              volume: tick.volume, instrumentType: 'EQUITY' as any,
+            };
+            const updated = [...prev, newStock];
             marketDataRef.current = updated;
             return updated;
           });
@@ -171,5 +194,5 @@ export const useMarketData = () => {
     };
   }, [connect, stopSimulation]);
 
-  return { marketData, loading, isConnected, marketStatus };
+  return { marketData, loading, isConnected, marketStatus, addInstruments };
 };

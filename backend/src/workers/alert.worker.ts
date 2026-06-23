@@ -15,18 +15,25 @@ interface DbActiveAlert {
 }
 
 let activeAlerts: DbActiveAlert[] = [];
-let lastRefresh = 0;
+let lastRefresh   = 0;
+let isRefreshing  = false;
 const REFRESH_INTERVAL = 60_000;
 
-const refreshAlerts = async () => {
-  const { rows } = await pool.query<DbActiveAlert>(
-    "SELECT id, user_id, symbol, exchange, property, operator, value, type FROM alerts WHERE status = 'ACTIVE' AND expires_at > NOW()",
-  );
-  activeAlerts = rows;
-  lastRefresh = Date.now();
+const refreshAlerts = async (): Promise<void> => {
+  if (isRefreshing) return;
+  isRefreshing = true;
+  try {
+    const { rows } = await pool.query<DbActiveAlert>(
+      "SELECT id, user_id, symbol, exchange, property, operator, value, type FROM alerts WHERE status = 'ACTIVE' AND expires_at > NOW()",
+    );
+    activeAlerts = rows;
+    lastRefresh  = Date.now();
+  } finally {
+    isRefreshing = false;
+  }
 };
 
-const markTriggered = async (alertId: string) => {
+const markTriggered = async (alertId: string): Promise<void> => {
   await pool.query("UPDATE alerts SET status = 'TRIGGERED' WHERE id = $1", [alertId]);
   activeAlerts = activeAlerts.filter((a) => a.id !== alertId);
 };
@@ -53,7 +60,7 @@ const evaluate = (tick: MarketTick, alert: DbActiveAlert): boolean => {
   }
 };
 
-export const startAlertWorker = () => {
+export const startAlertWorker = (): void => {
   refreshAlerts().catch(console.error);
 
   marketService.on('tick', async (tick: MarketTick) => {
@@ -66,7 +73,6 @@ export const startAlertWorker = () => {
     for (const alert of matching) {
       if (evaluate(tick, alert)) {
         await markTriggered(alert.id).catch(console.error);
-        // Send email notification (fire-and-forget)
         findUserById(alert.user_id).then((user) => {
           if (!user) return;
           const direction = alert.operator.startsWith('>') ? 'above' : 'below';
@@ -76,6 +82,7 @@ export const startAlertWorker = () => {
     }
   });
 
+  // Periodic full-refresh — separate from the tick-driven check above
   setInterval(() => refreshAlerts().catch(console.error), REFRESH_INTERVAL);
 
   console.log('[alert-worker] started');

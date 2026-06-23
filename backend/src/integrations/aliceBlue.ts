@@ -44,6 +44,114 @@ export const isBrokerEncryptionConfigured = (): boolean => Boolean(env.BROKER_EN
 export const getPlatformToken = (): string | null =>
   env.ALICE_ACCESS_TOKEN ?? null;
 
+// ─── Token refresh (Keycloak OAuth2) ────────────────────────────────────────
+// Alice Blue A3 uses Keycloak for auth. The refresh token can be exchanged for
+// a new access token without re-authenticating (no TOTP required).
+
+const DEFAULT_TOKEN_URL = 'https://a3.aliceblueonline.com/realms/alice/protocol/openid-connect/token';
+const DEFAULT_CLIENT_ID = 'web';
+
+/** Reads the `exp` (epoch seconds) from a JWT payload without verifying the signature. */
+export const decodeJwtExp = (token: string): number | null => {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    // base64url → base64
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(Buffer.from(b64, 'base64').toString('utf8')) as Record<string, unknown>;
+    return typeof payload.exp === 'number' ? payload.exp : null;
+  } catch {
+    return null;
+  }
+};
+
+export interface TokenSet {
+  accessToken:  string;
+  refreshToken: string;
+  expiresIn:    number;
+}
+
+/** Exchange a Keycloak refresh token for a new access + refresh token pair. */
+export const refreshAliceToken = async (
+  refreshToken: string,
+  tokenUrl  = DEFAULT_TOKEN_URL,
+  clientId  = DEFAULT_CLIENT_ID,
+): Promise<TokenSet> => {
+  const body = new URLSearchParams({
+    grant_type:    'refresh_token',
+    refresh_token: refreshToken,
+    client_id:     clientId,
+  });
+
+  const resp = await fetch(tokenUrl, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body:    body.toString(),
+    signal:  AbortSignal.timeout(15_000),
+  });
+
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`Keycloak token refresh HTTP ${resp.status}: ${detail.slice(0, 200)}`);
+  }
+
+  const data = await resp.json() as {
+    access_token:   string;
+    refresh_token?: string;
+    expires_in?:    number;
+  };
+
+  if (!data.access_token) throw new Error('Keycloak returned no access_token');
+
+  return {
+    accessToken:  data.access_token,
+    refreshToken: data.refresh_token ?? refreshToken, // rotate if provided
+    expiresIn:    data.expires_in ?? 3600,
+  };
+};
+
+// ─── Auth code exchange (ANT platform OAuth callback) ────────────────────────
+// When a user completes Alice Blue ANT login, the browser is redirected back with
+// ?authCode=...&userId=...&appcode=...
+// Exchange formula: sha256(userId + apiKey + authCode) → POST sessionauth → susertoken
+
+export const exchangeAuthCode = async (
+  userId:   string,
+  apiKey:   string,
+  authCode: string,
+  appCode:  string,
+): Promise<string> => {
+  const userData = createHash('sha256')
+    .update(userId + apiKey + authCode, 'utf8')
+    .digest('hex');
+
+  const resp = await fetch('https://a3.aliceblueonline.com/open-api/v2/sessionauth', {
+    method:  'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-AppID':       appCode,
+    },
+    body:   JSON.stringify({ userId, userData }),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`Alice Blue session auth HTTP ${resp.status}: ${detail.slice(0, 200)}`);
+  }
+
+  const data = await resp.json() as {
+    data?:        { susertoken?: string };
+    susertoken?:  string;
+    status?:      string;
+    emsg?:        string;
+  };
+
+  const token = data?.data?.susertoken ?? data?.susertoken;
+  if (!token) throw new Error(data?.emsg ?? 'No susertoken in session auth response');
+  return token;
+};
+
 // ─── WebSocket session token (sha256(sha256(jwt))) ───────────────────────────
 // Required before connecting to wss://ws1.aliceblueonline.com/NorenWS/
 

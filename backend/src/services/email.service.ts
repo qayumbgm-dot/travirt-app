@@ -50,14 +50,22 @@ const sendViaBrevo = async (opts: EmailOptions): Promise<void> => {
   }
 };
 
+// Lazy singleton — created once on first use so startup is not blocked.
+let _smtpTransport: { sendMail: (msg: unknown) => Promise<unknown> } | null = null;
+
+const getSmtpTransport = () => {
+  if (!_smtpTransport) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const nodemailer = require('nodemailer') as {
+      createTransport: (cfg: unknown) => { sendMail: (msg: unknown) => Promise<unknown> };
+    };
+    _smtpTransport = nodemailer.createTransport(smtpConfig());
+  }
+  return _smtpTransport;
+};
+
 const sendViaSMTP = async (opts: EmailOptions): Promise<void> => {
-  // nodemailer is an optional peer dependency — install it when SMTP is needed
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const nodemailer = require('nodemailer') as {
-    createTransport: (cfg: unknown) => { sendMail: (msg: unknown) => Promise<unknown> };
-  };
-  const transporter = nodemailer.createTransport(smtpConfig());
-  await transporter.sendMail({
+  await getSmtpTransport().sendMail({
     from:    `"TraVirt" <${env.SMTP_FROM}>`,
     to:      opts.to,
     subject: opts.subject,
@@ -111,12 +119,7 @@ export const verifyEmailTransport = async (): Promise<{
       error: 'No email transport configured — emails are logged only' };
   }
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const nodemailer = require('nodemailer') as {
-      createTransport: (cfg: unknown) => { verify: () => Promise<true> };
-    };
-    const transporter = nodemailer.createTransport(smtpConfig());
-    await transporter.verify();
+    await (getSmtpTransport() as unknown as { verify: () => Promise<true> }).verify();
     return { transport: 'smtp', configured: true, config, verified: true };
   } catch (err) {
     return { transport: 'smtp', configured: true, config, verified: false, error: (err as Error).message };

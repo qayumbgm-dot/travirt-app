@@ -1,7 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { queueOrExecuteTrade, getPendingOrders, cancelPendingOrder } from '../../services/trade.service';
-import { sendTradeConfirmationEmail } from '../../services/email.service';
 
 const tradeSchema = z.object({
   symbol: z.string().min(1).max(50),
@@ -23,18 +22,7 @@ export const placeOrder = async (req: FastifyRequest, reply: FastifyReply) => {
     return reply.code(400).send({ error: 'Invalid trade request', details: parsed.error.flatten() });
   }
   const outcome = await queueOrExecuteTrade(req.user.sub, parsed.data);
-
-  if (!outcome.pending) {
-    sendTradeConfirmationEmail(req.user.email, {
-      symbol:     parsed.data.symbol,
-      exchange:   parsed.data.exchange,
-      quantity:   parsed.data.quantity,
-      price:      parsed.data.price,
-      type:       parsed.data.transactionType,
-      newBalance: outcome.newBalance,
-    }).catch(() => {});
-  }
-
+  // Trade confirmation email is sent inside trade.service (covers controller + worker paths)
   return reply.code(201).send(outcome);
 };
 

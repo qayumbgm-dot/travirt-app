@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { fetchHeadlines, summarizeNews } from '../../services/ai.service';
+import { fetchHeadlines, summarizeNews, generateInsights, InsightStats } from '../../services/ai.service';
 
 export const aiRoutes = async (fastify: FastifyInstance) => {
   // GET /api/ai/news  — fetch headlines + AI summary in one call
@@ -23,5 +23,15 @@ export const aiRoutes = async (fastify: FastifyInstance) => {
     }
     const summary = await summarizeNews(headlines);
     return reply.send({ summary });
+  });
+
+  // POST /api/ai/insights  — personalised trading coaching from portfolio stats
+  fastify.post('/insights', async (req, reply) => {
+    const stats = req.body as InsightStats;
+    if (typeof stats.winRate !== 'number' || typeof stats.totalTrades !== 'number') {
+      return reply.code(400).send({ error: 'winRate and totalTrades are required numbers' });
+    }
+    const insights = await generateInsights(stats);
+    return reply.send({ insights });
   });
 };

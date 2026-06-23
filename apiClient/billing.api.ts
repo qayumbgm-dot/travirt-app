@@ -20,15 +20,28 @@ export interface PlanCatalogue {
 }
 
 export interface BillingStatus {
-  planName:          string;
-  displayName:       string;
-  priceInr:          number;
-  features:          PlanFeatures;
-  status:            string;
-  periodEnd:         string | null;
-  cancelAtPeriodEnd: boolean;
-  stripeCustomerId:  string | null;
-  stripeConfigured:  boolean;
+  planName:               string;
+  displayName:            string;
+  priceInr:               number;
+  features:               PlanFeatures;
+  status:                 string;
+  periodEnd:              string | null;
+  cancelAtPeriodEnd:      boolean;
+  razorpaySubscriptionId: string | null;
+  razorpayConfigured:     boolean;
+}
+
+export interface RazorpayOrder {
+  subscriptionId: string;
+  keyId:          string;
+  planName:       string;
+}
+
+export interface VerifyPaymentParams {
+  razorpayPaymentId:      string;
+  razorpaySubscriptionId: string;
+  razorpaySignature:      string;
+  planName:               'pro' | 'elite';
 }
 
 export const billingApi = {
@@ -42,13 +55,16 @@ export const billingApi = {
     return res.data;
   },
 
-  createCheckoutSession: async (planName: 'pro' | 'elite'): Promise<string> => {
-    const res = await apiClient.post<{ url: string }>('/billing/checkout', { planName });
-    return res.data.url;
+  createOrder: async (planName: 'pro' | 'elite'): Promise<RazorpayOrder> => {
+    const res = await apiClient.post<RazorpayOrder>('/billing/checkout', { planName });
+    return res.data;
   },
 
-  openPortal: async (): Promise<string> => {
-    const res = await apiClient.get<{ url: string }>('/billing/portal');
-    return res.data.url;
+  verifyPayment: async (params: VerifyPaymentParams): Promise<void> => {
+    await apiClient.post('/billing/verify', params);
+  },
+
+  cancelSubscription: async (): Promise<void> => {
+    await apiClient.post('/billing/cancel', {});
   },
 };

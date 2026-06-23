@@ -14,13 +14,22 @@ const schema = z.object({
   ALICE_USER_ID:       z.string().optional(),
   ALICE_API_KEY:       z.string().optional(),
   ALICE_ACCESS_TOKEN:  z.string().optional(),
+  // OAuth2 refresh token — obtained from Alice Blue Keycloak on first login.
+  // When set, the server auto-refreshes the access token before it expires so
+  // the live WS feed never drops due to a stale JWT.
+  ALICE_REFRESH_TOKEN: z.string().optional(),
+  // Keycloak token endpoint. Default: Alice Blue A3 realm.
+  ALICE_TOKEN_URL: z.string().optional(),
+  // Keycloak client_id used in the refresh grant. Default: 'web'.
+  ALICE_CLIENT_ID: z.string().optional(),
   // Public frontend URL used in email links; falls back to CORS_ORIGIN in dev
   FRONTEND_URL: z.string().optional(),
-  // Stripe — optional; payments are disabled when absent
-  STRIPE_SECRET_KEY:     z.string().optional(),
-  STRIPE_WEBHOOK_SECRET: z.string().optional(),
-  STRIPE_PRICE_PRO:      z.string().optional(),
-  STRIPE_PRICE_ELITE:    z.string().optional(),
+  // Razorpay — optional; payments are disabled when absent
+  RAZORPAY_KEY_ID:        z.string().optional(),
+  RAZORPAY_KEY_SECRET:    z.string().optional(),
+  RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+  RAZORPAY_PLAN_ID_PRO:   z.string().optional(),
+  RAZORPAY_PLAN_ID_ELITE: z.string().optional(),
   // Broker credential encryption — 64-char hex (32 bytes). Generate with:
   //   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
   // Optional: broker connections are disabled when absent

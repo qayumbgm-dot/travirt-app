@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { pool } from '../database/pool';
 import { verifyPassword } from '../auth/password';
-import { cancelSubscription } from './stripe.service';
+import { cancelSubscription } from './razorpay.service';
 
 type EraseResult =
   | { ok: true;  email: string }
@@ -12,8 +12,8 @@ type EraseResult =
  *
  * Execution order:
  *  1. Verify password — fail fast before touching anything
- *  2. Capture email + Stripe subscription ID (needed after row is gone)
- *  3. Cancel active Stripe subscription (best-effort)
+ *  2. Capture email + Razorpay subscription ID (needed after row is gone)
+ *  3. Cancel active subscription (best-effort)
  *  4. Log to gdpr_erasure_log (survives the DELETE)
  *  5. DELETE FROM users — all child rows CASCADE automatically
  *
@@ -27,11 +27,11 @@ export const eraseUserData = async (
 ): Promise<EraseResult> => {
   // 1 — Fetch the row we're about to erase
   const { rows } = await pool.query<{
-    password_hash:         string;
-    email:                 string;
-    stripe_subscription_id: string | null;
+    password_hash:            string;
+    email:                    string;
+    razorpay_subscription_id: string | null;
   }>(
-    `SELECT u.password_hash, u.email, us.stripe_subscription_id
+    `SELECT u.password_hash, u.email, us.razorpay_subscription_id
      FROM users u
      LEFT JOIN user_subscriptions us
        ON us.user_id = u.id AND us.status = 'active'
@@ -42,26 +42,27 @@ export const eraseUserData = async (
 
   if (!rows[0]) return { ok: false, error: 'User not found' };
 
-  const { password_hash, email, stripe_subscription_id } = rows[0];
+  const { password_hash, email, razorpay_subscription_id } = rows[0];
 
   // 2 — Verify password before any destructive action
   const valid = await verifyPassword(password, password_hash);
   if (!valid) return { ok: false, error: 'Incorrect password' };
 
-  // 3 — Cancel Stripe subscription (best-effort; don't block erasure if Stripe is down)
-  if (stripe_subscription_id) {
-    await cancelSubscription(stripe_subscription_id).catch((err: unknown) =>
-      console.warn('[gdpr] Stripe cancel failed:', (err as Error).message),
+  // 3 — Cancel Razorpay subscription (best-effort; don't block erasure if Razorpay is down)
+  if (razorpay_subscription_id) {
+    await cancelSubscription(razorpay_subscription_id, false).catch((err: unknown) =>
+      console.warn('[gdpr] Razorpay cancel failed:', (err as Error).message),
     );
   }
 
   const emailHash = createHash('sha256').update(email.toLowerCase().trim()).digest('hex');
 
   // 4 — Write erasure log BEFORE deleting (this table has no FK to users)
+  // stripe_sub_id column retained in audit table for historical records
   await pool.query(
     `INSERT INTO gdpr_erasure_log (email_hash, stripe_sub_id, ip_address)
      VALUES ($1, $2, $3)`,
-    [emailHash, stripe_subscription_id ?? null, ipAddress],
+    [emailHash, razorpay_subscription_id ?? null, ipAddress],
   );
 
   // 5 — Hard delete; all child tables cascade automatically

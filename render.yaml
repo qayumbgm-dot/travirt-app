@@ -35,13 +35,21 @@ services:
       - key: ALICE_API_KEY
         value: ""
       - key: ALICE_ACCESS_TOKEN
-        value: ""
-      # Stripe — leave blank in beta (billing UI hidden)
-      - key: STRIPE_SECRET_KEY
-        value: ""
-      - key: STRIPE_WEBHOOK_SECRET
-        value: ""
-      - key: STRIPE_PRICE_PRO
-        value: ""
-      - key: STRIPE_PRICE_ELITE
-        value: ""
+        sync: false
+      - key: ALICE_REFRESH_TOKEN
+        sync: false
+      - key: ALICE_TOKEN_URL
+        sync: false
+      - key: ALICE_CLIENT_ID
+        sync: false
+      # Razorpay — leave blank in beta (billing UI hidden); set in Render Dashboard when ready
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: RAZORPAY_PLAN_ID_PRO
+        sync: false
+      - key: RAZORPAY_PLAN_ID_ELITE
+        sync: false

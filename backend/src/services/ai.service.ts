@@ -71,6 +71,49 @@ export const fetchHeadlines = async (): Promise<NewsResult> => {
   return { headlines: FALLBACK_HEADLINES, sourceName: 'Curated', fromCache: false, fetchedAt: now };
 };
 
+export interface InsightStats {
+  winRate: number;
+  profitFactor: number;
+  consistencyScore: number;
+  worstInstrument: string;
+  drawdownPct: number;
+  totalTrades: number;
+}
+
+const FALLBACK_INSIGHTS = [
+  'Maintain a detailed trading journal — recording your entry rationale and post-trade review on every order helps identify behavioural patterns that raw statistics alone cannot reveal.',
+  'Strict position sizing (1–2% risk per trade) is the single most effective way to survive an inevitable losing streak and protect your capital through drawdown periods.',
+  'Reduce exposure on your worst-performing instrument until you can identify a specific edge. Repeated losses in one symbol suggest the setup does not suit your current strategy.',
+];
+
+export const generateInsights = async (stats: InsightStats): Promise<string[]> => {
+  if (!ai) return FALLBACK_INSIGHTS;
+
+  const pf = stats.profitFactor >= 999 ? '∞' : stats.profitFactor.toFixed(2);
+  const prompt = `You are a professional trading coach specialising in Indian retail traders learning prop firm discipline.
+
+Given this trader's current statistics:
+- Win Rate: ${stats.winRate.toFixed(1)}%
+- Profit Factor: ${pf}
+- Consistency Score: ${stats.consistencyScore.toFixed(0)}/100 (higher = more evenly distributed profits across trading days)
+- Worst performing instrument: ${stats.worstInstrument || 'N/A'}
+- Current drawdown from peak: ${stats.drawdownPct.toFixed(1)}%
+- Total closed trades: ${stats.totalTrades}
+
+Provide exactly 3 specific, actionable coaching recommendations to improve their trading discipline.
+Format your response as exactly 3 numbered lines (1., 2., 3.), each under 60 words.
+Reference the actual numbers provided — do not give generic advice.`;
+
+  try {
+    const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+    const text = response.text ?? '';
+    const lines = text.split('\n').map(l => l.replace(/^\d+\.\s*/, '').trim()).filter(l => l.length > 20);
+    return lines.slice(0, 3).length === 3 ? lines.slice(0, 3) : FALLBACK_INSIGHTS;
+  } catch {
+    return FALLBACK_INSIGHTS;
+  }
+};
+
 export const summarizeNews = async (headlines: string[]): Promise<string> => {
   if (!ai) {
     return `**Market Wrap** (AI disabled — set GEMINI_API_KEY)\n\n${headlines.slice(0, 5).map((h) => `• ${h}`).join('\n')}`;

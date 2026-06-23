@@ -50,6 +50,32 @@ export const summarizeNews = async (headlines: string[]): Promise<string> => {
   }
 };
 
+// ─── AI Insights ─────────────────────────────────────────────────────────────
+
+export interface InsightStats {
+  winRate: number;
+  profitFactor: number;
+  consistencyScore: number;
+  worstInstrument: string;
+  drawdownPct: number;
+  totalTrades: number;
+}
+
+const FALLBACK_INSIGHTS = [
+  'Maintain a detailed trading journal — recording your entry rationale and post-trade review on every order helps identify behavioural patterns that raw statistics alone cannot reveal.',
+  'Strict position sizing (1–2% risk per trade) is the single most effective way to survive an inevitable losing streak and protect your capital through drawdown periods.',
+  'Reduce exposure on your worst-performing instrument until you can identify a specific edge. Repeated losses in one symbol suggest the setup does not suit your current strategy.',
+];
+
+export const getInsights = async (stats: InsightStats): Promise<string[]> => {
+  try {
+    const res = await apiClient.post<{ insights: string[] }>('/ai/insights', stats);
+    return res.data.insights;
+  } catch {
+    return FALLBACK_INSIGHTS;
+  }
+};
+
 export const fetchNewsWithSummary = async (): Promise<LiveNewsResult & { summary: string }> => {
   try {
     const res = await apiClient.get<LiveNewsResult & { summary: string }>('/ai/news');

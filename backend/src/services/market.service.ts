@@ -4,7 +4,7 @@ import { env } from '../config/env';
 import { pool } from '../database/pool';
 import { redis } from '../config/redis';
 import { incCounter, setGauge } from './metrics.service';
-import { getWsSessionToken, createWsSession } from '../integrations/aliceBlue';
+import { getWsSessionToken, createWsSession, decodeJwtExp, refreshAliceToken } from '../integrations/aliceBlue';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,6 +57,11 @@ class MarketService extends EventEmitter {
   private aliceWs: WebSocket | null = null;
   private mode: 'SIMULATION' | 'LIVE' | 'CONNECTING' = 'CONNECTING';
 
+  // Live token management — mutable so auto-refresh can rotate without restart
+  private _activeToken: string | null = null;
+  private _activeRefreshToken: string | null = null;
+  private _tokenRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
   constructor() {
     super();
     this.setMaxListeners(1000);
@@ -69,8 +74,13 @@ class MarketService extends EventEmitter {
     await this.loadSnapshotFromRedis();
     await this.loadTokenMap();
 
-    const jwtToken = env.ALICE_ACCESS_TOKEN ?? env.ALICE_API_KEY;
-    if (jwtToken && env.ALICE_USER_ID) {
+    this._activeToken        = env.ALICE_ACCESS_TOKEN ?? env.ALICE_API_KEY ?? null;
+    this._activeRefreshToken = env.ALICE_REFRESH_TOKEN ?? null;
+
+    if (this._activeToken && env.ALICE_USER_ID) {
+      // Schedule auto-refresh before the JWT expires (no-op if no refresh token set)
+      this.scheduleTokenRefresh(this._activeToken);
+
       if (this.tokenToSymbol.size > 0) {
         // Instruments already in DB — connect immediately and subscribe all
         this.connectAliceBlue();
@@ -87,22 +97,41 @@ class MarketService extends EventEmitter {
 
   stop(): void {
     this.stopSimulation();
-    if (this.aliceWs) {
-      this.aliceWs.close();
-      this.aliceWs = null;
-    }
+    if (this._tokenRefreshTimer) { clearTimeout(this._tokenRefreshTimer); this._tokenRefreshTimer = null; }
+    if (this.aliceWs) { this.aliceWs.close(); this.aliceWs = null; }
   }
 
   // ── Public accessors ──────────────────────────────────────────────────────
 
   getMode(): 'SIMULATION' | 'LIVE' | 'CONNECTING' { return this.mode; }
 
+  // Called when a fresh Alice Blue session is established via the ANT OAuth callback.
+  // Drops any existing WS and reconnects immediately with the new token.
+  activateToken(token: string): void {
+    this._activeToken = token;
+    console.log('[market] Token activated via OAuth callback — reconnecting live feed');
+    if (this.aliceWs) {
+      const ws = this.aliceWs;
+      this.aliceWs = null;
+      ws.removeAllListeners('close');
+      ws.close();
+    }
+    this.stopSimulation();
+    if (env.ALICE_USER_ID) this.connectAliceBlue();
+  }
+
   getSnapshot(): MarketTick[] { return Array.from(this.prices.values()); }
 
+  /** Returns a snapshot copy of all LTPs. Prefer getLtp() for single-symbol lookups. */
   getPriceMap(): Map<string, number> {
     const map = new Map<string, number>();
     this.prices.forEach((tick, key) => map.set(key, tick.ltp));
     return map;
+  }
+
+  /** O(1) price lookup — avoids copying the entire price map. */
+  getLtp(exchange: string, symbol: string): number | undefined {
+    return this.prices.get(`${exchange}:${symbol}`)?.ltp;
   }
 
   getTick(exchange: string, symbol: string): MarketTick | undefined {
@@ -115,13 +144,12 @@ class MarketService extends EventEmitter {
     await this.loadTokenMap();
     if (this.tokenToSymbol.size === 0) return;
 
-    const jwtToken = env.ALICE_ACCESS_TOKEN ?? env.ALICE_API_KEY;
-    const wsOpen   = this.aliceWs?.readyState === WebSocket.OPEN;
+    const wsOpen = this.aliceWs?.readyState === WebSocket.OPEN;
 
     if (wsOpen) {
       // Re-subscribe whatever is actively tracked (instruments in prices map)
       this.sendActiveSubscriptions(this.aliceWs!);
-    } else if (jwtToken && env.ALICE_USER_ID && this.mode !== 'CONNECTING') {
+    } else if (this._activeToken && env.ALICE_USER_ID && this.mode !== 'CONNECTING') {
       console.log('[market] Instruments ready — triggering live feed connection...');
       this.stopSimulation();
       this.connectAliceBlue();
@@ -261,6 +289,83 @@ class MarketService extends EventEmitter {
     }
   }
 
+  // ── Token auto-refresh ────────────────────────────────────────────────────
+  // Decodes the JWT exp field and schedules a refresh 5 min before expiry.
+  // On success, replaces _activeToken and reconnects the WS with the new JWT.
+  // If no ALICE_REFRESH_TOKEN is configured this is a no-op — the current
+  // behaviour (simulation fallback → 30s retry) continues as before.
+
+  private scheduleTokenRefresh(token: string): void {
+    if (this._tokenRefreshTimer) {
+      clearTimeout(this._tokenRefreshTimer);
+      this._tokenRefreshTimer = null;
+    }
+
+    if (!this._activeRefreshToken) return; // no refresh token — can't auto-refresh
+
+    const exp = decodeJwtExp(token);
+    if (!exp) {
+      console.warn('[market] Cannot decode JWT exp — token auto-refresh disabled');
+      return;
+    }
+
+    const msUntilExpiry  = exp * 1000 - Date.now();
+    const msUntilRefresh = msUntilExpiry - 5 * 60 * 1000; // 5 min before expiry
+
+    if (msUntilRefresh <= 0) {
+      // Token already near/past expiry — mint immediately
+      console.log('[market] JWT near expiry — minting fresh session now');
+      this.mintFreshSession().catch((err) =>
+        console.error('[market] Immediate token refresh failed:', (err as Error).message),
+      );
+      return;
+    }
+
+    const minLeft = Math.round(msUntilRefresh / 60_000);
+    console.log(`[market] Token auto-refresh scheduled in ${minLeft} min`);
+    this._tokenRefreshTimer = setTimeout(() => {
+      this.mintFreshSession().catch((err) =>
+        console.error('[market] Scheduled token refresh failed:', (err as Error).message),
+      );
+    }, msUntilRefresh);
+  }
+
+  private async mintFreshSession(): Promise<void> {
+    const refreshToken = this._activeRefreshToken;
+    if (!refreshToken) return;
+
+    console.log('[market] Minting fresh Alice Blue session via Keycloak refresh...');
+    try {
+      const tokens = await refreshAliceToken(
+        refreshToken,
+        env.ALICE_TOKEN_URL,
+        env.ALICE_CLIENT_ID,
+      );
+
+      this._activeToken        = tokens.accessToken;
+      this._activeRefreshToken = tokens.refreshToken;
+      console.log('[market] Alice Blue token refreshed — reconnecting WS');
+
+      // Schedule the next refresh cycle
+      this.scheduleTokenRefresh(tokens.accessToken);
+
+      // Drop the current WS; onclose handler will NOT reconnect (we do it here)
+      if (this.aliceWs) {
+        const ws = this.aliceWs;
+        this.aliceWs = null;             // clear first so onclose retry is skipped
+        ws.removeAllListeners('close');  // prevent the 30s reconnect in onclose
+        ws.close();
+      }
+      this.connectAliceBlue();
+    } catch (err) {
+      console.error('[market] Token refresh failed:', (err as Error).message);
+      // Retry in 60s — simulation continues in the meantime
+      this._tokenRefreshTimer = setTimeout(() => {
+        this.mintFreshSession().catch(() => {});
+      }, 60_000);
+    }
+  }
+
   // ── Alice Blue NorenWS connection ─────────────────────────────────────────
   // Auth flow: createWsSess → connect → handshake with sha256(sha256(jwt)) →
   // subscribe ALL tokens in batches → heartbeat every 50s.
@@ -270,10 +375,11 @@ class MarketService extends EventEmitter {
     const state = this.aliceWs?.readyState;
     if (state === WebSocket.CONNECTING || state === WebSocket.OPEN) return;
 
-    this.mode = 'CONNECTING';
-    const jwtToken = env.ALICE_ACCESS_TOKEN ?? env.ALICE_API_KEY ?? '';
+    const jwtToken = this._activeToken ?? '';
     const clientId = env.ALICE_USER_ID ?? '';
+    if (!jwtToken || !clientId) { this.startSimulation(); return; }
 
+    this.mode = 'CONNECTING';
     createWsSession(jwtToken, clientId)
       .catch((err) => console.warn('[market] createWsSess failed (proceeding anyway):', err.message))
       .finally(() => this._openNorenSocket(jwtToken, clientId));
@@ -286,12 +392,17 @@ class MarketService extends EventEmitter {
       let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
       ws.on('open', () => {
+        // JWT tokens (Keycloak) → sha256(sha256(jwt)) + _API suffix on uid/actid
+        // Susertoken from ANT OAuth → use as-is, plain userId (no _API suffix)
+        const isJwt = jwtToken.startsWith('eyJ');
+        const susertoken = isJwt ? getWsSessionToken(jwtToken) : jwtToken;
+        const uid = isJwt ? `${clientId}_API` : clientId;
         ws.send(JSON.stringify({
-          t:           'c',
-          susertoken:  getWsSessionToken(jwtToken),
-          uid:         `${clientId}_API`,
-          actid:       `${clientId}_API`,
-          source:      'API',
+          t:          'c',
+          susertoken,
+          uid,
+          actid:      uid,
+          source:     'API',
         }));
       });
 
@@ -329,9 +440,12 @@ class MarketService extends EventEmitter {
       });
 
       ws.on('close', () => {
+        // If mintFreshSession already cleared this.aliceWs, it owns the reconnect — skip
+        if (this.aliceWs !== ws) return;
         console.log('[market] Alice Blue disconnected — simulation, retry in 30s');
         setGauge('market_mode_live', 0);
         if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+        this.aliceWs = null;
         this.startSimulation();
         setTimeout(() => this.connectAliceBlue(), 30_000);
       });

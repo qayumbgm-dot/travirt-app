@@ -1,5 +1,36 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { billingApi, BillingStatus, PlanCatalogue } from '../apiClient/billing.api';
+import { billingApi, BillingStatus, PlanCatalogue, VerifyPaymentParams } from '../apiClient/billing.api';
+
+interface RazorpayResponse {
+  razorpay_payment_id:      string;
+  razorpay_subscription_id: string;
+  razorpay_signature:       string;
+}
+
+interface RazorpayOptions {
+  key:             string;
+  subscription_id: string;
+  name:            string;
+  description:     string;
+  handler:         (response: RazorpayResponse) => void;
+  prefill?:        { name?: string; email?: string };
+  theme?:          { color?: string };
+  modal?:          { ondismiss?: () => void };
+}
+
+interface RazorpayWindow extends Window {
+  Razorpay: new (options: RazorpayOptions) => { open(): void };
+}
+
+const loadRazorpayScript = (): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if ((window as unknown as RazorpayWindow).Razorpay) { resolve(); return; }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload  = () => resolve();
+    script.onerror = () => reject(new Error('Failed to load Razorpay SDK'));
+    document.body.appendChild(script);
+  });
 
 const fmt = (paise: number) =>
   paise === 0 ? 'Free' : `₹${(paise / 100).toLocaleString('en-IN')}/mo`;
@@ -85,7 +116,7 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, isCurrent, loading, onUpgrade
               : 'bg-primary hover:bg-primary-focus text-white'
           }`}
         >
-          {loading ? 'Redirecting…' : `Upgrade to ${plan.display_name}`}
+          {loading ? 'Processing…' : `Upgrade to ${plan.display_name}`}
         </button>
       ) : null}
     </div>
@@ -93,11 +124,13 @@ const PlanCard: React.FC<PlanCardProps> = ({ plan, isCurrent, loading, onUpgrade
 };
 
 const BillingScreen: React.FC = () => {
-  const [status,  setStatus]  = useState<BillingStatus | null>(null);
-  const [plans,   setPlans]   = useState<PlanCatalogue[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [status,    setStatus]    = useState<BillingStatus | null>(null);
+  const [plans,     setPlans]     = useState<PlanCatalogue[]>([]);
+  const [loading,   setLoading]   = useState(true);
   const [upgrading, setUpgrading] = useState(false);
-  const [error,   setError]   = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [error,     setError]     = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -113,42 +146,68 @@ const BillingScreen: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-    // Check for Stripe redirect result in URL hash
-    const hash = window.location.hash;
-    if (hash.includes('success=1')) {
-      window.location.hash = '#billing';
-      setTimeout(load, 1500); // re-fetch after short delay for webhook processing
-    }
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   const handleUpgrade = async (planName: 'pro' | 'elite') => {
-    if (!status?.stripeConfigured) {
+    if (!status?.razorpayConfigured) {
       setError('Payment processing is not enabled on this server.');
       return;
     }
     setUpgrading(true);
     setError(null);
+    setSuccessMsg(null);
     try {
-      const url = await billingApi.createCheckoutSession(planName);
-      window.location.href = url;
+      const { subscriptionId, keyId } = await billingApi.createOrder(planName);
+      await loadRazorpayScript();
+
+      const rzp = new (window as unknown as RazorpayWindow).Razorpay({
+        key:             keyId,
+        subscription_id: subscriptionId,
+        name:            'TraVirt',
+        description:     `${planName.charAt(0).toUpperCase() + planName.slice(1)} Plan`,
+        theme:           { color: '#6366f1' },
+        handler: async (response: RazorpayResponse) => {
+          try {
+            const params: VerifyPaymentParams = {
+              razorpayPaymentId:      response.razorpay_payment_id,
+              razorpaySubscriptionId: response.razorpay_subscription_id,
+              razorpaySignature:      response.razorpay_signature,
+              planName,
+            };
+            await billingApi.verifyPayment(params);
+            setSuccessMsg('Subscription activated! Your plan has been upgraded.');
+            setTimeout(load, 1500);
+          } catch {
+            setError('Payment verification failed. Please contact support.');
+          } finally {
+            setUpgrading(false);
+          }
+        },
+        modal: {
+          ondismiss: () => setUpgrading(false),
+        },
+      });
+
+      rzp.open();
     } catch {
       setError('Could not start checkout. Please try again.');
       setUpgrading(false);
     }
   };
 
-  const handlePortal = async () => {
-    setUpgrading(true);
+  const handleCancel = async () => {
+    if (!window.confirm('Cancel your subscription? You will keep access until the end of the current billing period.')) return;
+    setCancelling(true);
     setError(null);
+    setSuccessMsg(null);
     try {
-      const url = await billingApi.openPortal();
-      window.open(url, '_blank', 'noopener');
+      await billingApi.cancelSubscription();
+      setSuccessMsg('Subscription cancelled. Access continues until the period ends.');
+      setTimeout(load, 500);
     } catch {
-      setError('Could not open billing portal. Please try again.');
+      setError('Could not cancel subscription. Please try again.');
     } finally {
-      setUpgrading(false);
+      setCancelling(false);
     }
   };
 
@@ -187,14 +246,17 @@ const BillingScreen: React.FC = () => {
                 </p>
               )}
             </div>
-            {isPaidPlan && (
+            {isPaidPlan && !status.cancelAtPeriodEnd && (
               <button
-                disabled={upgrading}
-                onClick={handlePortal}
-                className="px-4 py-2 rounded-lg border border-overlay hover:border-primary text-sm font-medium text-text-secondary hover:text-primary transition-colors disabled:opacity-60"
+                disabled={cancelling}
+                onClick={handleCancel}
+                className="px-4 py-2 rounded-lg border border-danger/40 hover:border-danger text-sm font-medium text-danger/80 hover:text-danger transition-colors disabled:opacity-60"
               >
-                <i className="fas fa-external-link-alt mr-2" />
-                Manage Subscription
+                {cancelling ? (
+                  <><i className="fas fa-spinner fa-spin mr-2" />Cancelling…</>
+                ) : (
+                  <><i className="fas fa-times-circle mr-2" />Cancel Subscription</>
+                )}
               </button>
             )}
           </div>
@@ -206,7 +268,14 @@ const BillingScreen: React.FC = () => {
           </div>
         )}
 
-        {!status?.stripeConfigured && (
+        {successMsg && (
+          <div className="mb-6 px-4 py-3 bg-success/10 border border-success/30 rounded-lg text-success text-sm">
+            <i className="fas fa-check-circle mr-2" />
+            {successMsg}
+          </div>
+        )}
+
+        {!status?.razorpayConfigured && (
           <div className="mb-6 px-4 py-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-500 text-sm">
             <i className="fas fa-info-circle mr-2" />
             Payments are not configured on this server. Upgrade buttons are disabled.
@@ -229,7 +298,7 @@ const BillingScreen: React.FC = () => {
         {/* FAQ note */}
         <p className="text-center text-xs text-muted mt-8">
           All plans include virtual trading with zero real-money risk.
-          Paid plans are billed monthly in INR. Cancel anytime via the billing portal.
+          Paid plans are billed monthly in INR. Cancel anytime.
         </p>
       </div>
     </div>

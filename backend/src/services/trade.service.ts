@@ -87,8 +87,7 @@ export const queueOrExecuteTrade = async (
     return { pending: false, ...result };
   }
 
-  const priceMap = marketService.getPriceMap();
-  const ltp = priceMap.get(`${trade.exchange}:${trade.symbol}`);
+  const ltp = marketService.getLtp(trade.exchange, trade.symbol);
 
   if (ltp !== undefined && isImmediatelyFillable(trade, ltp)) {
     const fillPrice = (trade.orderType === 'SLM') ? ltp : trade.price;
@@ -134,8 +133,30 @@ export interface TradeResult {
   newBalance: number;
 }
 
-const BUY_CHARGE_RATE = 0.0003;  // 0.03% brokerage simulation
+const BUY_CHARGE_RATE  = 0.0003;
 const SELL_CHARGE_RATE = 0.0003;
+
+// Fire-and-forget side-effects after a committed trade.
+// All errors are swallowed — none should block or roll back the trade.
+const firePostTradeEffects = (
+  userId: string,
+  trade: TradeRequest,
+  newBalance: number,
+): void => {
+  awardReferrerBonus(userId).catch(() => {});
+  routeToBroker(userId, trade).catch(() => {});
+  findUserById(userId).then((u) => {
+    if (!u) return;
+    sendTradeConfirmationEmail(u.email, {
+      symbol:     trade.symbol,
+      exchange:   trade.exchange,
+      quantity:   trade.quantity,
+      price:      trade.price,
+      type:       trade.transactionType as 'BUY' | 'SELL',
+      newBalance,
+    }).catch(() => {});
+  }).catch(() => {});
+};
 
 export const executeTrade = async (userId: string, trade: TradeRequest): Promise<TradeResult> => {
   const client = await pool.connect();
@@ -150,9 +171,11 @@ export const executeTrade = async (userId: string, trade: TradeRequest): Promise
 
     const currentBalance = Number(balRows[0].virtual_balance);
     const tradeValue = trade.quantity * trade.price;
+    let newBalance: number;
+    let order: TradeResult['order'];
 
     if (trade.transactionType === 'BUY') {
-      const charges = tradeValue * BUY_CHARGE_RATE;
+      const charges  = tradeValue * BUY_CHARGE_RATE;
       const totalCost = tradeValue + charges;
 
       if (currentBalance < totalCost) {
@@ -162,17 +185,15 @@ export const executeTrade = async (userId: string, trade: TradeRequest): Promise
         );
       }
 
-      // Deduct balance
       await client.query(
         'UPDATE portfolio_balances SET virtual_balance = virtual_balance - $1, updated_at = NOW() WHERE user_id = $2',
         [totalCost, userId],
       );
 
-      // Upsert position (weighted average price)
       const existing = await getPosition(userId, trade.symbol, trade.exchange, client);
       if (existing) {
-        const newQty = existing.quantity + trade.quantity;
-        const newAvgPrice = (existing.quantity * existing.avg_price + trade.quantity * trade.price) / newQty;
+        const newQty      = existing.quantity + trade.quantity;
+        const newAvgPrice = (existing.quantity * existing.avg_price + tradeValue) / newQty;
         await client.query(
           'UPDATE positions SET quantity = $1, avg_price = $2 WHERE user_id = $3 AND symbol = $4 AND exchange = $5',
           [newQty, newAvgPrice, userId, trade.symbol, trade.exchange],
@@ -192,36 +213,20 @@ export const executeTrade = async (userId: string, trade: TradeRequest): Promise
         client,
       );
 
-      const order = await insertOrder(userId, {
-        symbol: trade.symbol,
-        exchange: trade.exchange,
-        quantity: trade.quantity,
-        price: trade.price,
-        order_type: trade.orderType,
-        transaction_type: 'BUY',
-        variety: trade.variety ?? null,
-        status: 'COMPLETE',
+      order = await insertOrder(userId, {
+        symbol: trade.symbol, exchange: trade.exchange,
+        quantity: trade.quantity, price: trade.price,
+        order_type: trade.orderType, transaction_type: 'BUY',
+        variety: trade.variety ?? null, status: 'COMPLETE',
         validity: trade.validity ?? null,
-        stop_loss: trade.stopLoss ?? null,
-        take_profit: trade.takeProfit ?? null,
+        stop_loss: trade.stopLoss ?? null, take_profit: trade.takeProfit ?? null,
         trigger_price: trade.triggerPrice ?? null,
       }, client);
 
-      await client.query('COMMIT');
-      awardReferrerBonus(userId).catch(() => {});
-      routeToBroker(userId, trade).catch(() => {});
-      const { rows: newBalRows } = await pool.query<{ virtual_balance: number }>(
-        'SELECT virtual_balance FROM portfolio_balances WHERE user_id = $1',
-        [userId],
-      );
-      const newBalance = Number(newBalRows[0]?.virtual_balance ?? 0);
-      findUserById(userId).then((u) => {
-        if (u) sendTradeConfirmationEmail(u.email, { symbol: trade.symbol, exchange: trade.exchange, quantity: trade.quantity, price: trade.price, type: 'BUY', newBalance }).catch(() => {});
-      }).catch(() => {});
-      return { order, newBalance };
+      newBalance = currentBalance - totalCost;
 
     } else {
-      // SELL — check position
+      // SELL
       const existing = await getPosition(userId, trade.symbol, trade.exchange, client);
       if (!existing || existing.quantity < trade.quantity) {
         throw Object.assign(
@@ -230,10 +235,9 @@ export const executeTrade = async (userId: string, trade: TradeRequest): Promise
         );
       }
 
-      const charges = tradeValue * SELL_CHARGE_RATE;
+      const charges  = tradeValue * SELL_CHARGE_RATE;
       const proceeds = tradeValue - charges;
 
-      // Reduce / remove position
       const remainingQty = existing.quantity - trade.quantity;
       if (remainingQty === 0) {
         await client.query(
@@ -247,14 +251,12 @@ export const executeTrade = async (userId: string, trade: TradeRequest): Promise
         );
       }
 
-      // Add proceeds to balance
       await client.query(
         'UPDATE portfolio_balances SET virtual_balance = virtual_balance + $1, updated_at = NOW() WHERE user_id = $2',
         [proceeds, userId],
       );
 
-      const pnlPerShare = trade.price - existing.avg_price;
-      const pnl = pnlPerShare * trade.quantity;
+      const pnl    = (trade.price - existing.avg_price) * trade.quantity;
       const pnlStr = pnl >= 0 ? `+₹${pnl.toFixed(2)}` : `-₹${Math.abs(pnl).toFixed(2)}`;
 
       await insertTransaction(
@@ -265,34 +267,23 @@ export const executeTrade = async (userId: string, trade: TradeRequest): Promise
         client,
       );
 
-      const order = await insertOrder(userId, {
-        symbol: trade.symbol,
-        exchange: trade.exchange,
-        quantity: trade.quantity,
-        price: trade.price,
-        order_type: trade.orderType,
-        transaction_type: 'SELL',
-        variety: trade.variety ?? null,
-        status: 'COMPLETE',
+      order = await insertOrder(userId, {
+        symbol: trade.symbol, exchange: trade.exchange,
+        quantity: trade.quantity, price: trade.price,
+        order_type: trade.orderType, transaction_type: 'SELL',
+        variety: trade.variety ?? null, status: 'COMPLETE',
         validity: trade.validity ?? null,
-        stop_loss: trade.stopLoss ?? null,
-        take_profit: trade.takeProfit ?? null,
+        stop_loss: trade.stopLoss ?? null, take_profit: trade.takeProfit ?? null,
         trigger_price: trade.triggerPrice ?? null,
       }, client);
 
-      await client.query('COMMIT');
-      awardReferrerBonus(userId).catch(() => {});
-      routeToBroker(userId, trade).catch(() => {});
-      const { rows: newBalRows } = await pool.query<{ virtual_balance: number }>(
-        'SELECT virtual_balance FROM portfolio_balances WHERE user_id = $1',
-        [userId],
-      );
-      const newBalance = Number(newBalRows[0]?.virtual_balance ?? 0);
-      findUserById(userId).then((u) => {
-        if (u) sendTradeConfirmationEmail(u.email, { symbol: trade.symbol, exchange: trade.exchange, quantity: trade.quantity, price: trade.price, type: 'SELL', newBalance }).catch(() => {});
-      }).catch(() => {});
-      return { order, newBalance };
+      newBalance = currentBalance + proceeds;
     }
+
+    await client.query('COMMIT');
+    firePostTradeEffects(userId, trade, newBalance);
+    return { order, newBalance };
+
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

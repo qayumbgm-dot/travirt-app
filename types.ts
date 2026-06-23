@@ -292,3 +292,11 @@ export interface BasketItem {
     quantity: number;
     price?: number;
 }
+
+export interface Breach {
+    id: string;
+    rule: string;
+    description: string;
+    timestamp: number;
+    severity: 'info' | 'warning' | 'hard_block';
+}

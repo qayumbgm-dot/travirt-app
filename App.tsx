@@ -40,6 +40,7 @@ import DisclaimerModal from './components/common/DisclaimerModal';
 import TrialPlanModal from './components/common/TrialPlanModal';
 import { getInstrumentKey } from './utils/formatters';
 import { ToastProvider, useToast } from './contexts/ToastContext';
+import { brokerApi } from './apiClient/broker.api';
 import { BasketProvider } from './contexts/BasketContext';
 import { SubscriptionProvider } from './contexts/SubscriptionContext';
 import SubscriptionBanner from './components/billing/SubscriptionBanner';
@@ -103,6 +104,25 @@ const AppContent: React.FC<{
     useEffect(() => {
         document.title = `${SCREEN_TITLES[activeScreen]} — TraVirt`;
     }, [activeScreen]);
+
+    // Handle Alice Blue ANT OAuth callback: ?authCode=...&userId=...&appcode=...
+    useEffect(() => {
+        const params   = new URLSearchParams(window.location.search);
+        const authCode = params.get('authCode');
+        const userId   = params.get('userId');
+        const appcode  = params.get('appcode');
+        if (!authCode || !userId || !appcode) return;
+
+        // Strip the params from the URL immediately so a page refresh doesn't replay them
+        const clean = new URL(window.location.href);
+        ['authCode', 'userId', 'appcode'].forEach(k => clean.searchParams.delete(k));
+        window.history.replaceState({}, '', clean.toString());
+
+        showToast('Connecting to Alice Blue live market…', 'info');
+        brokerApi.aliceCallback(authCode, userId, appcode)
+            .then(() => showToast('Alice Blue connected! Switching to live market data.', 'success'))
+            .catch((err: Error) => showToast(`Alice Blue auth failed: ${err.message}`, 'error'));
+    }, []);
     const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
     const [tradeViewMode, setTradeViewMode] = useState<TradeViewMode>('chart');
     const [sidebarMode, setSidebarMode] = useState<SidebarMode>('watchlist');

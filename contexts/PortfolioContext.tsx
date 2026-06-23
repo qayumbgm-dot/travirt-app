@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode, useCallback, useRef } from 'react';
-import { PortfolioState, Order, TransactionType, OrderType, OrderVariety, Stock, Transaction, GTTOrder, GTTStatus, GTTTriggerType, Alert, AlertOperator, AlertStatus, MarketStatus } from '../types';
+import { PortfolioState, Order, TransactionType, OrderType, OrderVariety, Stock, Transaction, GTTOrder, GTTStatus, GTTTriggerType, Alert, AlertOperator, AlertStatus, MarketStatus, Breach } from '../types';
 import { useMarketData } from '../hooks/useMarketData';
 import { formatCurrency } from '../utils/formatters';
 import { INITIAL_INR_BALANCE, INITIAL_NXO_BALANCE, INITIAL_VIRTUAL_BALANCE, RISK_CONFIG } from '../constants';
@@ -35,6 +35,8 @@ interface PortfolioContextType {
     loading: boolean;
     sessionPnl: number;
     equityHistory: { time: number; value: number }[];
+    breaches: Breach[];
+    consistencyScore: number;
     addInstruments: (stocks: Stock[]) => void;
     addInr: (amount: number) => void;
     buyNfino: (inrAmount: number) => boolean;
@@ -134,6 +136,9 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
     const sessionInitializedRef = useRef(false);
     const alertsRef = useRef<Alert[]>([]);
     const [equityHistory, setEquityHistory] = useState<{ time: number; value: number }[]>([]);
+    const [breaches, setBreaches] = useState<Breach[]>([]);
+    const prevDailyBreachRef = useRef(false);
+    const prevDrawdownBreachRef = useRef(false);
 
     const [sessionStartBalance, setSessionStartBalance] = useState<number>(() => {
         const today = getTodayKey();
@@ -195,37 +200,37 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
         return marketData.find((s) => s.symbol === symbol);
     }, [marketData]);
 
-    // ── Live P&L ticker ───────────────────────────────────────────────────────
+    // ── Live P&L — event-driven, fires on every market tick instead of polling ──
+    // Replacing the former 1-second setInterval: this only re-renders when market
+    // data actually changes, not on a fixed clock regardless of data activity.
     useEffect(() => {
-        const interval = setInterval(() => {
-            if (marketData.length > 0) {
-                setPortfolio((prev) => {
-                    let totalInvested = 0;
-                    let totalCurrentValue = 0;
+        if (marketData.length === 0) return;
+        setPortfolio((prev) => {
+            if (prev.positions.length === 0) return prev;
 
-                    const updatedPositions = prev.positions.map((pos) => {
-                        const stock = getStock(pos.symbol, pos.exchange);
-                        if (stock) {
-                            const currentValue = pos.quantity * stock.ltp;
-                            const investedValue = pos.quantity * pos.avgPrice;
-                            totalInvested += investedValue;
-                            totalCurrentValue += currentValue;
-                            return { ...pos, ltp: stock.ltp, pnl: currentValue - investedValue, currentValue, investedValue };
-                        }
-                        return pos;
-                    });
+            let totalInvested = 0;
+            let totalCurrentValue = 0;
 
-                    const totalPnl = totalCurrentValue - totalInvested;
-                    const todayPnl = updatedPositions.reduce((acc, pos) => {
-                        const stock = getStock(pos.symbol, pos.exchange);
-                        return acc + (stock ? (stock.ltp - stock.prevClose) * pos.quantity : 0);
-                    }, 0);
+            const updatedPositions = prev.positions.map((pos) => {
+                const stock = getStock(pos.symbol, pos.exchange);
+                if (stock) {
+                    const currentValue  = pos.quantity * stock.ltp;
+                    const investedValue = pos.quantity * pos.avgPrice;
+                    totalInvested      += investedValue;
+                    totalCurrentValue  += currentValue;
+                    return { ...pos, ltp: stock.ltp, pnl: currentValue - investedValue, currentValue, investedValue };
+                }
+                return pos;
+            });
 
-                    return { ...prev, positions: updatedPositions, totalInvested, totalCurrentValue, totalPnl, todayPnl, marginUsed: totalInvested };
-                });
-            }
-        }, 1000);
-        return () => clearInterval(interval);
+            const totalPnl = totalCurrentValue - totalInvested;
+            const todayPnl = updatedPositions.reduce((acc, pos) => {
+                const stock = getStock(pos.symbol, pos.exchange);
+                return acc + (stock ? (stock.ltp - stock.prevClose) * pos.quantity : 0);
+            }, 0);
+
+            return { ...prev, positions: updatedPositions, totalInvested, totalCurrentValue, totalPnl, todayPnl, marginUsed: totalInvested };
+        });
     }, [marketData, getStock]);
 
     // ── Risk engine ───────────────────────────────────────────────────────────
@@ -283,6 +288,51 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
             warnedDrawdownRef.current = false;
         }
     }, [riskEngine, showToast]);
+
+    // ── Consistency score (equity spread across trading days) ─────────────────
+    const consistencyScore = useMemo((): number => {
+        if (equityHistory.length < 2) return 0;
+        const totalPnl = equityHistory[equityHistory.length - 1].value - equityHistory[0].value;
+        if (totalPnl <= 0) return 0;
+        const byDay: Record<string, { start: number; end: number }> = {};
+        for (const pt of equityHistory) {
+            const day = new Date(pt.time).toISOString().slice(0, 10);
+            if (!byDay[day]) byDay[day] = { start: pt.value, end: pt.value };
+            byDay[day].end = pt.value;
+        }
+        const days = Object.values(byDay);
+        if (days.length < 2) return 0;
+        const maxDayPnl = Math.max(...days.map(d => Math.max(0, d.end - d.start)));
+        if (maxDayPnl === 0) return 100;
+        return Math.max(0, Math.min(100, 100 * (1 - maxDayPnl / totalPnl)));
+    }, [equityHistory]);
+
+    // ── Hard-breach logging for risk rule violations ──────────────────────────
+    useEffect(() => {
+        const isDailyBreach = riskEngine.dailyLossState === 'breached';
+        if (isDailyBreach && !prevDailyBreachRef.current) {
+            setBreaches(prev => [...prev, {
+                id: `breach_${Date.now()}_daily`,
+                rule: 'Daily Loss Breach',
+                description: `Daily loss limit of ${(RISK_CONFIG.dailyLossLimitPct * 100).toFixed(0)}% breached — ₹${riskEngine.dailyLoss.toLocaleString('en-IN')} lost today`,
+                timestamp: Date.now(),
+                severity: 'hard_block',
+            }]);
+        }
+        prevDailyBreachRef.current = isDailyBreach;
+
+        const isDrawdownBreach = riskEngine.maxDrawdownState === 'breached';
+        if (isDrawdownBreach && !prevDrawdownBreachRef.current) {
+            setBreaches(prev => [...prev, {
+                id: `breach_${Date.now()}_drawdown`,
+                rule: 'Max Drawdown Breach',
+                description: `Max drawdown of ${(RISK_CONFIG.maxDrawdownPct * 100).toFixed(0)}% breached — ₹${riskEngine.drawdownAmount.toLocaleString('en-IN')} from peak`,
+                timestamp: Date.now(),
+                severity: 'hard_block',
+            }]);
+        }
+        prevDrawdownBreachRef.current = isDrawdownBreach;
+    }, [riskEngine.dailyLossState, riskEngine.maxDrawdownState, riskEngine.dailyLoss, riskEngine.drawdownAmount]);
 
     // ── Session start-balance initialisation (once per day, after data loads) ──
     useEffect(() => {
@@ -370,6 +420,69 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
             if (!existingPosition || existingPosition.quantity < order.quantity) return false;
         }
 
+        // Rule violation detection (informational — trade still executes)
+        const todayStr = getTodayKey();
+        const todayExec = portfolio.orderHistory.filter(
+            o => o.status === 'EXECUTED' && new Date(o.timestamp).toISOString().slice(0, 10) === todayStr
+        );
+        const detected: Breach[] = [];
+
+        if (todayExec.length >= 20) {
+            detected.push({
+                id: `breach_${Date.now()}_ot`,
+                rule: 'Overtrading',
+                description: `${todayExec.length + 1} orders placed today (prop firm limit: 20)`,
+                timestamp: Date.now(),
+                severity: 'warning',
+            });
+        }
+
+        if (order.transactionType === TransactionType.BUY) {
+            const existing = portfolio.positions.find(p => p.symbol === order.symbol && p.exchange === stock.exchange);
+            if (existing) {
+                const todayBuys = todayExec.filter(o => o.symbol === order.symbol && o.transactionType === TransactionType.BUY);
+                if (todayBuys.length >= 1) {
+                    detected.push({
+                        id: `breach_${Date.now()}_stack`,
+                        rule: 'Position Stacking',
+                        description: `Adding to ${order.symbol} — ${todayBuys.length + 1}× buy on existing position in one day`,
+                        timestamp: Date.now(),
+                        severity: 'warning',
+                    });
+                }
+                if (order.quantity >= existing.quantity) {
+                    detected.push({
+                        id: `breach_${Date.now()}_mg`,
+                        rule: 'Martingale Pattern',
+                        description: `New buy qty (${order.quantity}) ≥ existing position qty (${existing.quantity}) in ${order.symbol}`,
+                        timestamp: Date.now(),
+                        severity: 'warning',
+                    });
+                }
+            }
+            if (order.orderType === OrderType.MARKET) {
+                const hasStop = portfolio.gttOrders.some(g =>
+                    g.symbol === order.symbol && g.status === GTTStatus.ACTIVE && g.transactionType === TransactionType.SELL
+                );
+                if (!hasStop) {
+                    detected.push({
+                        id: `breach_${Date.now()}_sl`,
+                        rule: 'No Stop Loss',
+                        description: `Market BUY on ${order.symbol} placed without a GTT stop-loss`,
+                        timestamp: Date.now(),
+                        severity: 'info',
+                    });
+                }
+            }
+        }
+
+        if (detected.length > 0) {
+            setBreaches(prev => [...prev, ...detected]);
+            if (detected.some(b => b.severity === 'warning')) {
+                showToast('Rule violation logged — check Orders → Violations', 'warning');
+            }
+        }
+
         // Record equity snapshot before the trade alters balances
         setEquityHistory(prev => [
             ...prev,
@@ -440,7 +553,7 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
         }
 
         return true;
-    }, [getStock, portfolio.virtualBalance, portfolio.positions, riskEngine, setShowRefillPrompt, refetchPortfolio, showToast]);
+    }, [getStock, portfolio.virtualBalance, portfolio.positions, portfolio.orderHistory, portfolio.gttOrders, riskEngine, setShowRefillPrompt, refetchPortfolio, showToast]);
 
     const executeBracketOrder = useCallback((
         mainOrder: Omit<Order, 'id' | 'timestamp' | 'status'>,
@@ -606,7 +719,8 @@ export const PortfolioProvider: React.FC<{ children: ReactNode; setShowRefillPro
 
     return (
         <PortfolioContext.Provider value={{
-            portfolio, riskEngine, sessionPnl, equityHistory, executeTrade, executeBracketOrder, createGTT, deleteGTT,
+            portfolio, riskEngine, sessionPnl, equityHistory, breaches, consistencyScore,
+            executeTrade, executeBracketOrder, createGTT, deleteGTT,
             createAlert, deleteAlert, getStock, marketData, marketStatus,
             loading: loading || marketLoading, addInstruments, addInr, buyNfino, convertNfinoToVirtual,
             claimDailyBonus, addReward,

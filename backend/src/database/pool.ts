@@ -13,7 +13,7 @@ if (!dbUrl.includes('client_encoding'))  dbUrl = addParam(dbUrl, 'client_encodin
 
 export const pool = new Pool({
   connectionString: dbUrl,
-  max: 10,
+  max: 5,                        // Neon free-tier cap; raise when on a paid branch
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 15_000,
 });

@@ -5,7 +5,7 @@ import type { ListChildComponentProps } from 'react-window';
 import { usePortfolio } from '../contexts/PortfolioContext';
 import { useToast } from '../contexts/ToastContext';
 import { formatCurrency } from '../utils/formatters';
-import type { Order } from '../types';
+import type { Order, Breach } from '../types';
 import { portfolioApi } from '../apiClient/portfolio.api';
 import { gttApi, GttOrder } from '../apiClient/gtt.api';
 import { alertApi, AlertRecord } from '../apiClient/alert.api';
@@ -333,9 +333,69 @@ const ExportButton: React.FC<{ type: 'orders' | 'transactions'; label: string }>
     );
 };
 
+const SEVERITY_STYLE: Record<Breach['severity'], { badge: string; icon: string }> = {
+    hard_block: { badge: 'bg-danger/20 text-danger',        icon: 'fa-ban text-danger'                  },
+    warning:    { badge: 'bg-yellow-500/20 text-yellow-400', icon: 'fa-exclamation-triangle text-yellow-400' },
+    info:       { badge: 'bg-blue-500/20 text-blue-400',    icon: 'fa-info-circle text-blue-400'        },
+};
+
+const BreachesPanel: React.FC = () => {
+    const { breaches } = usePortfolio();
+    const sorted = [...breaches].sort((a, b) => b.timestamp - a.timestamp);
+
+    if (sorted.length === 0) {
+        return (
+            <div className="bg-surface rounded-lg shadow-lg p-10 text-center">
+                <i className="fas fa-shield-alt text-4xl mb-4 text-success block"></i>
+                <h4 className="text-lg font-semibold text-text-primary">No Violations Logged</h4>
+                <p className="text-muted text-sm mt-1">Your trading is rule-compliant this session.</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="bg-surface rounded-lg shadow-lg overflow-hidden">
+            <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left text-text-secondary">
+                    <thead className="text-xs text-text-secondary uppercase bg-overlay">
+                        <tr>
+                            <th className="p-3">Time</th>
+                            <th className="p-3">Rule</th>
+                            <th className="p-3">Description</th>
+                            <th className="p-3">Severity</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {sorted.map(breach => {
+                            const s = SEVERITY_STYLE[breach.severity];
+                            return (
+                                <tr key={breach.id} className="border-b border-overlay last:border-b-0 hover:bg-overlay/50">
+                                    <td className="p-3 text-xs text-muted whitespace-nowrap">
+                                        {new Date(breach.timestamp).toLocaleString()}
+                                    </td>
+                                    <td className="p-3 font-semibold text-text-primary whitespace-nowrap">
+                                        <i className={`fas ${s.icon} mr-1.5 text-xs`}></i>
+                                        {breach.rule}
+                                    </td>
+                                    <td className="p-3 text-xs text-muted">{breach.description}</td>
+                                    <td className="p-3">
+                                        <span className={`font-bold text-xs py-0.5 px-1.5 rounded ${s.badge}`}>
+                                            {breach.severity === 'hard_block' ? 'HARD BLOCK' : breach.severity.toUpperCase()}
+                                        </span>
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+};
+
 const OrdersScreen: React.FC = () => {
-    const { portfolio } = usePortfolio();
-    const [activeTab, setActiveTab] = useState<'orders' | 'gtt' | 'alerts'>('orders');
+    const { portfolio, breaches } = usePortfolio();
+    const [activeTab, setActiveTab] = useState<'orders' | 'gtt' | 'alerts' | 'violations'>('orders');
     const [gttCount, setGttCount] = useState(0);
     const [alertCount, setAlertCount] = useState(0);
     const [orderListHeight, setOrderListHeight] = useState(() => Math.max(300, window.innerHeight - 250));
@@ -346,7 +406,7 @@ const OrdersScreen: React.FC = () => {
         return () => window.removeEventListener('resize', onResize);
     }, []);
 
-    const TabButton: React.FC<{ tabName: 'orders' | 'gtt' | 'alerts', label: string }> = ({ tabName, label }) => (
+    const TabButton: React.FC<{ tabName: 'orders' | 'gtt' | 'alerts' | 'violations', label: string }> = ({ tabName, label }) => (
         <button
             onClick={() => setActiveTab(tabName)}
             className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors ${activeTab === tabName ? 'bg-surface text-text-primary' : 'bg-transparent text-muted hover:bg-surface/50'}`}>
@@ -366,6 +426,7 @@ const OrdersScreen: React.FC = () => {
                     <TabButton tabName="orders" label="Orders" />
                     <TabButton tabName="gtt" label={`GTT (${gttCount})`} />
                     <TabButton tabName="alerts" label={`Alerts (${alertCount})`} />
+                    <TabButton tabName="violations" label={`Violations${breaches.length > 0 ? ` (${breaches.length})` : ''}`} />
                 </div>
 
                 {activeTab === 'orders' && (
@@ -401,6 +462,7 @@ const OrdersScreen: React.FC = () => {
                 )}
                 {activeTab === 'gtt' && <GTTList onCountChange={setGttCount} />}
                 {activeTab === 'alerts' && <AlertList onCountChange={setAlertCount} />}
+                {activeTab === 'violations' && <BreachesPanel />}
             </div>
         </main>
     );

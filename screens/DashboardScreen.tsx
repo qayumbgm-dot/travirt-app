@@ -1,10 +1,20 @@
 
 import React, { useState, useEffect } from 'react';
 import { usePortfolio } from '../contexts/PortfolioContext';
+import { useToast } from '../contexts/ToastContext';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { Screen } from '../App';
 import { MOCK_INDICES } from '../constants';
+import CertificateModal from '../components/common/CertificateModal';
+import RiskReport from '../components/common/RiskReport';
+
+const CHALLENGE_KEY = 'travirt_challenge';
+
+interface ChallengeData {
+    startDate: string;
+    startingBalance: number;
+}
 
 const StatCard: React.FC<{ title: string; value: string; change?: string; changeColor?: string; icon: string; iconBg: string; }> = ({ title, value, change, changeColor, icon, iconBg }) => (
     <div className="bg-surface rounded-lg shadow-lg p-5 flex items-center">
@@ -148,6 +158,184 @@ const AccountHealthCard: React.FC = () => {
     );
 };
 
+// ── 30-Day Challenge Card ─────────────────────────────────────────────────────
+
+const ChallengeCard: React.FC = () => {
+    const { portfolio, breaches, consistencyScore } = usePortfolio();
+    const { showToast } = useToast();
+    const [challenge, setChallenge] = useState<ChallengeData | null>(() => {
+        try { return JSON.parse(localStorage.getItem(CHALLENGE_KEY) ?? 'null'); } catch { return null; }
+    });
+    const [showCertificate, setShowCertificate] = useState(false);
+
+    const accountValue = portfolio.virtualBalance + portfolio.totalCurrentValue;
+
+    const startChallenge = () => {
+        if (accountValue <= 0) {
+            showToast('Fund your account before starting a challenge. Go to Funds → Convert NXO.', 'warning');
+            return;
+        }
+        const data: ChallengeData = { startDate: new Date().toISOString(), startingBalance: accountValue };
+        localStorage.setItem(CHALLENGE_KEY, JSON.stringify(data));
+        setChallenge(data);
+        showToast('30-Day Consistency Challenge started! Good luck!', 'success');
+    };
+
+    const resetChallenge = () => {
+        localStorage.removeItem(CHALLENGE_KEY);
+        setChallenge(null);
+        showToast('Challenge reset.', 'info');
+    };
+
+    if (!challenge) {
+        return (
+            <div className="bg-surface rounded-lg shadow-lg border border-overlay p-5 flex items-center gap-5">
+                <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                    <i className="fas fa-flag text-primary text-xl"></i>
+                </div>
+                <div className="flex-1">
+                    <p className="font-bold text-text-primary">30-Day Consistency Challenge</p>
+                    <p className="text-xs text-muted mt-0.5">Grow your account +10% in 30 days while respecting daily loss limits, hitting 10 trading days, and maintaining a consistency score ≥60.</p>
+                </div>
+                <button
+                    onClick={startChallenge}
+                    className="shrink-0 bg-primary hover:bg-primary-focus text-white font-semibold px-5 py-2.5 rounded-lg text-sm transition-colors"
+                >
+                    Start Challenge
+                </button>
+            </div>
+        );
+    }
+
+    const startTs = new Date(challenge.startDate).getTime();
+    const endTs   = startTs + 30 * 24 * 3600 * 1000;
+    const msLeft  = endTs - Date.now();
+    const daysLeft    = Math.max(0, Math.ceil(msLeft / 86400000));
+    const daysElapsed = Math.min(30, 30 - daysLeft);
+
+    const profitPct = challenge.startingBalance > 0
+        ? (accountValue - challenge.startingBalance) / challenge.startingBalance * 100
+        : 0;
+
+    const tradingDays = new Set(
+        portfolio.orderHistory
+            .filter(o => o.status === 'EXECUTED' && o.timestamp >= startTs)
+            .map(o => new Date(o.timestamp).toISOString().slice(0, 10))
+    ).size;
+
+    const hardBreaches = breaches.filter(b => b.timestamp >= startTs && b.severity === 'hard_block');
+    const isClean = hardBreaches.length === 0;
+
+    const objectives = [
+        { label: 'Profit Target',    detail: `${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(2)}% of +10%`, pct: Math.min(Math.max(0, profitPct) / 10 * 100, 100), met: profitPct >= 10 },
+        { label: 'Trading Days',     detail: `${tradingDays} of 10 days`,                                    pct: Math.min(tradingDays / 10 * 100, 100),             met: tradingDays >= 10 },
+        { label: 'Rule Compliance',  detail: isClean ? 'Clean' : `${hardBreaches.length} breach(es)`,        pct: isClean ? 100 : 0,                                 met: isClean },
+        { label: 'Consistency',      detail: `${consistencyScore.toFixed(0)}/100`,                           pct: Math.min(consistencyScore / 60 * 100, 100),        met: consistencyScore >= 60 },
+    ];
+
+    const passed = profitPct >= 10 && tradingDays >= 10 && isClean && consistencyScore >= 60;
+    const expired = daysLeft === 0 && !passed;
+
+    const headerBg =
+        passed   ? 'border-success/40'      :
+        expired  ? 'border-danger/40'       :
+                   'border-primary/30';
+
+    const statusBadge =
+        passed   ? 'bg-success/20 text-success'    :
+        expired  ? 'bg-danger/20 text-danger'      :
+                   'bg-primary/20 text-primary';
+
+    const statusLabel = passed ? 'PASSED' : expired ? 'FAILED' : `Day ${daysElapsed}/30`;
+
+    return (
+        <div className={`bg-surface rounded-lg shadow-lg border ${headerBg}`}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3 border-b border-overlay">
+                <div className="flex items-center gap-2">
+                    <i className="fas fa-flag text-primary"></i>
+                    <span className="font-bold text-text-primary">30-Day Consistency Challenge</span>
+                    <span className="text-[10px] text-muted border border-overlay rounded-full px-2 py-0.5">
+                        Started {new Date(challenge.startDate).toLocaleDateString()}
+                    </span>
+                </div>
+                <div className="flex items-center gap-3">
+                    <span className={`text-xs font-bold px-3 py-1 rounded-full ${statusBadge}`}>{statusLabel}</span>
+                    <button onClick={resetChallenge} className="text-muted hover:text-danger text-xs" title="Reset challenge">
+                        <i className="fas fa-redo-alt"></i>
+                    </button>
+                </div>
+            </div>
+
+            {/* Pass / Fail banners */}
+            {passed && (
+                <>
+                    <div className="mx-5 mt-4 flex flex-wrap items-center justify-between gap-3 bg-success/10 border border-success/30 rounded-lg p-3">
+                        <div className="flex items-center gap-2 text-sm text-success">
+                            <i className="fas fa-check-circle shrink-0"></i>
+                            <span>Challenge passed! All objectives met. Your trading consistency is prop-firm ready.</span>
+                        </div>
+                        <button
+                            onClick={() => setShowCertificate(true)}
+                            className="shrink-0 bg-yellow-500 hover:bg-yellow-400 text-yellow-900 font-bold px-4 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-2 whitespace-nowrap"
+                        >
+                            <i className="fas fa-certificate"></i>
+                            View Certificate
+                        </button>
+                    </div>
+                    {showCertificate && (
+                        <CertificateModal
+                            startDate={challenge.startDate}
+                            profitPct={profitPct}
+                            consistencyScore={consistencyScore}
+                            tradingDays={tradingDays}
+                            onClose={() => setShowCertificate(false)}
+                        />
+                    )}
+                </>
+            )}
+            {expired && !passed && (
+                <div className="mx-5 mt-4 flex items-center gap-2 bg-danger/10 border border-danger/30 rounded-lg p-3 text-sm text-danger">
+                    <i className="fas fa-times-circle shrink-0"></i>
+                    <span>Challenge expired. Review your performance and start a new challenge to try again.</span>
+                </div>
+            )}
+
+            {/* Objectives */}
+            <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-4">
+                {objectives.map(obj => (
+                    <div key={obj.label} className="bg-base rounded-lg p-3 border border-overlay">
+                        <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] text-muted uppercase tracking-wider">{obj.label}</span>
+                            <i className={`fas ${obj.met ? 'fa-check-circle text-success' : 'fa-circle text-overlay'} text-xs`}></i>
+                        </div>
+                        <div className="w-full bg-overlay rounded-full h-1.5 mb-2">
+                            <div
+                                className={`h-1.5 rounded-full transition-all duration-700 ${obj.met ? 'bg-success' : 'bg-primary'}`}
+                                style={{ width: `${obj.pct}%` }}
+                            />
+                        </div>
+                        <p className={`text-xs font-semibold ${obj.met ? 'text-success' : 'text-text-primary'}`}>{obj.detail}</p>
+                    </div>
+                ))}
+            </div>
+
+            {/* Days remaining bar */}
+            {!passed && !expired && (
+                <div className="px-5 pb-4">
+                    <div className="flex justify-between text-[10px] text-muted mb-1">
+                        <span>Challenge progress</span>
+                        <span>{daysLeft} days remaining</span>
+                    </div>
+                    <div className="w-full bg-overlay rounded-full h-1">
+                        <div className="bg-primary h-1 rounded-full transition-all duration-700" style={{ width: `${(daysElapsed / 30) * 100}%` }} />
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
 // ── Prop-Firm Risk Engine ─────────────────────────────────────────────────────
 
 interface RiskRule {
@@ -173,6 +361,7 @@ const getRuleStyle = (pct: number, isProfit = false) => {
 
 const RiskEnginePanel: React.FC = () => {
     const { portfolio, riskEngine } = usePortfolio();
+    const [showReport, setShowReport] = useState(false);
 
     const accountSize  = portfolio.virtualBalance + portfolio.totalInvested;
     const profitTarget = accountSize * 0.08;
@@ -236,17 +425,27 @@ const RiskEnginePanel: React.FC = () => {
                     <span className="font-bold text-text-primary">Prop Firm Risk Engine</span>
                     <span className="text-[10px] text-muted border border-overlay rounded-full px-2 py-0.5">Simulated evaluation rules</span>
                 </div>
-                <div className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full ${
-                    anyBreach  ? 'bg-danger/20 text-danger' :
-                    anyWarning ? 'bg-yellow-400/20 text-yellow-400' :
-                                 'bg-success/20 text-success'
-                }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${
-                        anyBreach ? 'bg-danger' : anyWarning ? 'bg-yellow-400' : 'bg-success'
-                    }`}></span>
-                    {anyBreach ? 'RULE BREACH' : anyWarning ? 'WARNING' : 'ALL CLEAR'}
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => setShowReport(true)}
+                        className="flex items-center gap-1.5 text-xs text-muted hover:text-text-primary border border-overlay rounded-lg px-3 py-1.5 transition-colors"
+                    >
+                        <i className="fas fa-file-alt text-xs"></i>
+                        Risk Report
+                    </button>
+                    <div className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full ${
+                        anyBreach  ? 'bg-danger/20 text-danger' :
+                        anyWarning ? 'bg-yellow-400/20 text-yellow-400' :
+                                     'bg-success/20 text-success'
+                    }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+                            anyBreach ? 'bg-danger' : anyWarning ? 'bg-yellow-400' : 'bg-success'
+                        }`}></span>
+                        {anyBreach ? 'RULE BREACH' : anyWarning ? 'WARNING' : 'ALL CLEAR'}
+                    </div>
                 </div>
             </div>
+            {showReport && <RiskReport onClose={() => setShowReport(false)} />}
 
             <div className="p-5">
                 {/* Breach alert banner */}
@@ -305,6 +504,43 @@ const RiskEnginePanel: React.FC = () => {
     );
 };
 
+// ── Economic Calendar Card ────────────────────────────────────────────────────
+
+const EconomicCalendarCard: React.FC = () => {
+    const [expanded, setExpanded] = useState(false);
+    return (
+        <div className="bg-surface rounded-lg shadow-lg border border-overlay overflow-hidden">
+            <button
+                onClick={() => setExpanded(e => !e)}
+                className="w-full flex items-center justify-between px-5 py-3 text-left hover:bg-overlay/30 transition-colors"
+            >
+                <div className="flex items-center gap-2">
+                    <i className="fas fa-calendar-alt text-primary"></i>
+                    <span className="font-bold text-text-primary">Economic Calendar</span>
+                    <span className="text-[10px] text-muted border border-overlay rounded-full px-2 py-0.5">India · This Week</span>
+                </div>
+                <i className={`fas fa-chevron-${expanded ? 'up' : 'down'} text-muted text-xs`}></i>
+            </button>
+            {expanded && (
+                <div className="border-t border-overlay">
+                    <iframe
+                        src="https://sslecal2.investing.com?columns=exc_flags,exc_currency,exc_importance,exc_actual,exc_forecast,exc_previous&features=datepicker,timezone&countries=14&calType=week&timeZone=23&lang=1"
+                        width="100%"
+                        height="460"
+                        frameBorder="0"
+                        title="Economic Calendar — India"
+                        className="block bg-transparent"
+                        allowFullScreen
+                    />
+                    <p className="px-5 py-2 text-[10px] text-muted border-t border-overlay">
+                        Powered by <span className="text-primary">Investing.com</span> · Filtered to India macro events.
+                    </p>
+                </div>
+            )}
+        </div>
+    );
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DashboardScreen: React.FC<{ setActiveScreen: (screen: Screen) => void; }> = ({ setActiveScreen }) => {
@@ -330,8 +566,14 @@ const DashboardScreen: React.FC<{ setActiveScreen: (screen: Screen) => void; }> 
                 {/* Account Health */}
                 <AccountHealthCard />
 
+                {/* 30-Day Challenge */}
+                <ChallengeCard />
+
                 {/* Prop Firm Risk Engine */}
                 <RiskEnginePanel />
+
+                {/* Economic Calendar */}
+                <EconomicCalendarCard />
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {/* Main Content: Positions & Movers */}

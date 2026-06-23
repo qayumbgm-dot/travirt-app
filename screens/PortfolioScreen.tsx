@@ -4,6 +4,7 @@ import { createChart, ColorType } from 'lightweight-charts';
 import { usePortfolio } from '../contexts/PortfolioContext';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 import { Order, TransactionType } from '../types';
+import { getInsights, InsightStats } from '../services/geminiService';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -17,7 +18,7 @@ interface ClosedTrade {
     timestamp: number;
 }
 
-type PortfolioTab = 'holdings' | 'equity' | 'stats' | 'calendar' | 'instruments';
+type PortfolioTab = 'holdings' | 'equity' | 'stats' | 'calendar' | 'instruments' | 'insights';
 
 // ── FIFO Trade Matcher ────────────────────────────────────────────────────────
 
@@ -470,6 +471,98 @@ const InstrumentsTab: React.FC = () => {
     );
 };
 
+// ── AI Insights Tab ───────────────────────────────────────────────────────────
+
+const InsightsTab: React.FC = () => {
+    const { portfolio, consistencyScore, riskEngine } = usePortfolio();
+    const [insights, setInsights] = useState<string[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [generated, setGenerated] = useState(false);
+
+    const trades = useMemo(() => pairOrders(portfolio.orderHistory), [portfolio.orderHistory]);
+
+    const stats = useMemo((): InsightStats => {
+        const wins     = trades.filter(t => t.pnl > 0);
+        const losses   = trades.filter(t => t.pnl < 0);
+        const winRate  = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
+        const gross    = wins.reduce((s, t) => s + t.pnl, 0);
+        const loss     = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+        const pf       = loss > 0 ? gross / loss : gross > 0 ? 999 : 0;
+
+        const bySymbol: Record<string, number> = {};
+        trades.forEach(t => { bySymbol[t.symbol] = (bySymbol[t.symbol] ?? 0) + t.pnl; });
+        const worstInstrument = Object.entries(bySymbol).sort((a, b) => a[1] - b[1])[0]?.[0] ?? 'N/A';
+
+        return { winRate, profitFactor: pf, consistencyScore, worstInstrument, drawdownPct: riskEngine.maxDrawdownConsumedPct * 100, totalTrades: trades.length };
+    }, [trades, consistencyScore, riskEngine.maxDrawdownConsumedPct]);
+
+    const handleGenerate = async () => {
+        setLoading(true);
+        const result = await getInsights(stats);
+        setInsights(result);
+        setGenerated(true);
+        setLoading(false);
+    };
+
+    if (trades.length === 0) {
+        return <EmptyState icon="fa-lightbulb" message="Close at least one position to generate AI insights based on your trading statistics." />;
+    }
+
+    const insightIcons  = ['fas fa-crosshairs', 'fas fa-shield-alt', 'fas fa-chart-line'];
+    const insightColors = ['text-primary', 'text-yellow-400', 'text-success'];
+
+    return (
+        <div className="space-y-4">
+            {/* Snapshot stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <StatBox label="Win Rate"      value={`${stats.winRate.toFixed(1)}%`}                                     color={stats.winRate >= 50 ? 'text-success' : 'text-danger'} />
+                <StatBox label="Profit Factor" value={stats.profitFactor >= 999 ? '∞' : stats.profitFactor.toFixed(2)}    color={stats.profitFactor >= 1 ? 'text-success' : 'text-danger'} />
+                <StatBox label="Consistency"   value={`${consistencyScore.toFixed(0)}/100`}                               color={consistencyScore >= 70 ? 'text-success' : consistencyScore >= 40 ? 'text-yellow-400' : 'text-danger'} />
+                <StatBox label="Drawdown"       value={`${stats.drawdownPct.toFixed(1)}%`}                                 color={stats.drawdownPct > 7 ? 'text-danger' : 'text-success'} />
+            </div>
+
+            {!generated ? (
+                <div className="text-center py-10">
+                    <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                        <i className="fas fa-brain text-primary text-2xl"></i>
+                    </div>
+                    <p className="text-muted text-sm mb-5 max-w-sm mx-auto leading-relaxed">
+                        Gemini AI will analyse your trading statistics and generate 3 personalised coaching recommendations tailored to your actual performance.
+                    </p>
+                    <button
+                        onClick={handleGenerate}
+                        disabled={loading}
+                        className="bg-primary hover:bg-primary-focus disabled:opacity-50 text-white font-semibold px-6 py-3 rounded-lg text-sm transition-colors inline-flex items-center gap-2"
+                    >
+                        <i className={`fas ${loading ? 'fa-spinner fa-spin' : 'fa-magic'}`}></i>
+                        {loading ? 'Generating insights…' : 'Generate AI Insights'}
+                    </button>
+                </div>
+            ) : (
+                <div className="space-y-3">
+                    {insights.map((insight, i) => (
+                        <div key={i} className="bg-base rounded-lg p-4 border border-overlay flex gap-4">
+                            <div className={`w-10 h-10 rounded-lg shrink-0 flex items-center justify-center bg-overlay ${insightColors[i]}`}>
+                                <i className={`${insightIcons[i]} text-sm`}></i>
+                            </div>
+                            <div>
+                                <p className={`text-xs font-bold uppercase tracking-wider mb-1 ${insightColors[i]}`}>Insight {i + 1}</p>
+                                <p className="text-text-secondary text-sm leading-relaxed">{insight}</p>
+                            </div>
+                        </div>
+                    ))}
+                    <div className="flex items-center justify-between pt-1">
+                        <p className="text-[10px] text-muted">Powered by Gemini 2.5 Flash · Informational only — not financial advice.</p>
+                        <button onClick={handleGenerate} disabled={loading} className="text-xs text-primary hover:underline disabled:opacity-50">
+                            {loading ? 'Regenerating…' : 'Regenerate'}
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
 // ── Main Screen ───────────────────────────────────────────────────────────────
 
 const PortfolioScreen: React.FC = () => {
@@ -482,6 +575,7 @@ const PortfolioScreen: React.FC = () => {
         { key: 'stats',       label: 'Statistics',  icon: 'fa-calculator'  },
         { key: 'calendar',    label: 'Calendar',    icon: 'fa-calendar-alt'},
         { key: 'instruments', label: 'Instruments', icon: 'fa-chart-bar'   },
+        { key: 'insights',    label: 'AI Insights', icon: 'fa-lightbulb'   },
     ];
 
     return (
@@ -534,6 +628,7 @@ const PortfolioScreen: React.FC = () => {
                     {activeTab === 'stats'       && <StatsTab />}
                     {activeTab === 'calendar'    && <CalendarTab />}
                     {activeTab === 'instruments' && <InstrumentsTab />}
+                    {activeTab === 'insights'    && <InsightsTab />}
                 </div>
             </div>
         </main>

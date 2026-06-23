@@ -124,9 +124,11 @@ export const getPosition = async (
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
-export const getOrders = async (userId: string, limit = 500): Promise<DbOrder[]> => {
+export const getOrders = async (userId: string, limit = 200): Promise<DbOrder[]> => {
   const { rows } = await pool.query<DbOrder>(
-    'SELECT * FROM orders WHERE user_id = $1 ORDER BY executed_at DESC LIMIT $2',
+    `SELECT id, symbol, exchange, quantity, price, order_type, transaction_type, variety,
+            status, validity, stop_loss, take_profit, trigger_price, executed_at
+     FROM orders WHERE user_id = $1 ORDER BY executed_at DESC LIMIT $2`,
     [userId, limit],
   );
   return rows;
@@ -214,7 +216,10 @@ export const insertTransaction = async (
 
 export const getGttOrders = async (userId: string): Promise<DbGttOrder[]> => {
   const { rows } = await pool.query<DbGttOrder>(
-    'SELECT * FROM gtt_orders WHERE user_id = $1 ORDER BY created_at DESC',
+    `SELECT id, symbol, exchange, transaction_type, trigger_type, quantity, status,
+            trigger_price, limit_price, stoploss_trigger_price, stoploss_limit_price,
+            target_trigger_price, target_limit_price, created_at, expires_at
+     FROM gtt_orders WHERE user_id = $1 ORDER BY created_at DESC`,
     [userId],
   );
   return rows;
@@ -250,7 +255,8 @@ export const deleteGttOrder = async (userId: string, gttId: string): Promise<boo
 
 export const getAlerts = async (userId: string): Promise<DbAlert[]> => {
   const { rows } = await pool.query<DbAlert>(
-    'SELECT * FROM alerts WHERE user_id = $1 ORDER BY created_at DESC',
+    `SELECT id, symbol, exchange, property, operator, value, type, status, created_at, expires_at
+     FROM alerts WHERE user_id = $1 ORDER BY created_at DESC`,
     [userId],
   );
   return rows;

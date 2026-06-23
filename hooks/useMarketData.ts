@@ -29,9 +29,10 @@ const buildStockFromTick = (tick: any, existing: Stock): Stock => ({
 const snapshotToStocks = (ticks: any[]): Stock[] => {
   // Merge server ticks with MOCK_STOCKS to preserve full Stock fields
   const mockMap = new Map<string, Stock>(MOCK_STOCKS.map((s) => [`${s.exchange}:${s.symbol}`, s]));
+  const seen    = new Set<string>();
   const result: Stock[] = [];
 
-  ticks.forEach((tick) => {
+  for (const tick of ticks) {
     const key = `${tick.exchange}:${tick.symbol}`;
     const base = mockMap.get(key) ?? ({
       symbol: tick.symbol, exchange: tick.exchange, name: tick.symbol,
@@ -39,14 +40,13 @@ const snapshotToStocks = (ticks: any[]): Stock[] => {
       changePercent: 0, volume: 0, instrumentType: 'EQUITY',
     } as Stock);
     result.push(buildStockFromTick(tick, base));
-  });
+    seen.add(key);
+  }
 
-  // Add any mock stocks not in server snapshot (options/futures)
-  mockMap.forEach((s, key) => {
-    if (!result.find((r) => `${r.exchange}:${r.symbol}` === key)) {
-      result.push(s);
-    }
-  });
+  // Add any mock stocks not present in the server snapshot (options/futures)
+  for (const [key, s] of mockMap) {
+    if (!seen.has(key)) result.push(s);
+  }
 
   return result;
 };

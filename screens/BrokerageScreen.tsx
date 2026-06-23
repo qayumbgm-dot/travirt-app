@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { formatCurrency } from '../utils/formatters';
 
-type OuterTab = 'charges' | 'calculator';
+type OuterTab = 'partners' | 'charges' | 'calculator';
 
 // ─── Brokerage Screen ────────────────────────────────────────────────────────
 
 const BrokerageScreen: React.FC = () => {
-    const [outerTab, setOuterTab] = useState<OuterTab>('charges');
+    const [outerTab, setOuterTab] = useState<OuterTab>('partners');
 
     const TabBtn: React.FC<{ id: OuterTab; icon: string; label: string }> = ({ id, icon, label }) => (
         <button
@@ -26,10 +26,12 @@ const BrokerageScreen: React.FC = () => {
         <div className="flex flex-col h-full bg-base animate-fade-in overflow-y-auto custom-scrollbar">
             {/* Outer tab bar */}
             <div className="flex border-b border-overlay bg-surface shrink-0 sticky top-0 z-10">
+                <TabBtn id="partners"   icon="fa-handshake"  label="Open Account" />
                 <TabBtn id="charges"    icon="fa-tags"       label="Charges" />
                 <TabBtn id="calculator" icon="fa-calculator" label="Brokerage Calculator" />
             </div>
 
+            {outerTab === 'partners'   && <PartnerBrokersSection />}
             {outerTab === 'charges'    && <ChargesTab />}
             {outerTab === 'calculator' && <CalculatorTab />}
         </div>
@@ -223,6 +225,123 @@ const ChargesTab: React.FC = () => {
         </>
     );
 };
+
+// ─── Partner Brokers ─────────────────────────────────────────────────────────
+
+const ALICE_ANT_URL = 'https://ant.aliceblueonline.com/?appcode=lHLymQPeZV';
+
+const BROKER_PARTNERS = [
+    {
+        name:      'Zerodha',
+        tagline:   "India's largest discount broker",
+        features:  [
+            '₹0 equity delivery brokerage',
+            'Flat ₹20 per order — intraday & F&O',
+            'Kite — award-winning trading platform',
+            'Coin for direct mutual funds',
+        ],
+        borderCls: 'border-blue-500',
+        textCls:   'text-blue-400',
+        url:       'https://zerodha.com/?c=ZS2944&s=CONSOLE',
+        liveUrl:   null as string | null,
+        badge:     null as string | null,
+    },
+    {
+        name:      'Alice Blue',
+        tagline:   'ANT Web platform · Integrated with TraVirt live feed',
+        features:  [
+            '₹0 equity delivery brokerage',
+            'Flat ₹15 per order — intraday & F&O',
+            'ANT Web & ANT Mobi platforms',
+            'Live market data on TraVirt',
+        ],
+        borderCls: 'border-violet-500',
+        textCls:   'text-violet-400',
+        url:       'https://ekyc.aliceblueonline.com/?source=456512',
+        liveUrl:   ALICE_ANT_URL,
+        badge:     'TraVirt Integrated' as string | null,
+    },
+] as const;
+
+const PartnerBrokersSection: React.FC = () => (
+    <div className="flex flex-col items-center w-full py-10 px-6">
+        {/* Hero */}
+        <div className="text-center mb-10 max-w-2xl">
+            <div className="inline-flex items-center gap-2 bg-primary/10 border border-primary/30 text-primary text-xs font-bold px-3 py-1 rounded-full mb-4">
+                <i className="fas fa-rocket text-xs" />
+                Level up from virtual to real markets
+            </div>
+            <h1 className="text-4xl font-bold text-text-primary mb-3">Open a Real Trading Account</h1>
+            <p className="text-muted text-base leading-relaxed">
+                You've mastered virtual trading on TraVirt. Now take the next step — open a demat account with one of our trusted broker partners and trade with real money using the same strategies.
+            </p>
+        </div>
+
+        {/* Broker Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl mb-8">
+            {BROKER_PARTNERS.map((b) => (
+                <div
+                    key={b.name}
+                    className={`relative bg-surface rounded-xl border-2 ${b.borderCls} p-6 flex flex-col gap-5 hover:shadow-xl transition-all duration-300`}
+                >
+                    {b.badge && (
+                        <span className="absolute top-4 right-4 text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30">
+                            {b.badge}
+                        </span>
+                    )}
+                    <div>
+                        <h3 className={`text-2xl font-bold mb-1 ${b.textCls}`}>{b.name}</h3>
+                        <p className="text-muted text-xs">{b.tagline}</p>
+                    </div>
+                    <ul className="space-y-2 flex-1">
+                        {b.features.map((f) => (
+                            <li key={f} className="flex items-center gap-2.5 text-sm text-text-secondary">
+                                <i className="fas fa-check-circle text-success text-xs flex-shrink-0" />
+                                {f}
+                            </li>
+                        ))}
+                    </ul>
+                    <div className="flex flex-col gap-2 mt-1">
+                        <a
+                            href={b.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full text-center py-3 rounded-lg font-semibold text-sm bg-primary hover:bg-primary/90 text-white transition-colors flex items-center justify-center gap-2"
+                        >
+                            Open Account Free
+                            <i className="fas fa-external-link-alt text-xs" />
+                        </a>
+                        {b.liveUrl && (
+                            <a
+                                href={b.liveUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="w-full text-center py-2.5 rounded-lg font-semibold text-sm border border-violet-500 text-violet-400 hover:bg-violet-500/10 transition-colors flex items-center justify-center gap-2"
+                            >
+                                <i className="fas fa-plug text-xs" />
+                                Connect Live Feed (Existing Account)
+                            </a>
+                        )}
+                    </div>
+                </div>
+            ))}
+        </div>
+
+        {/* Info strip */}
+        <div className="w-full max-w-3xl bg-surface border border-overlay rounded-xl p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+            <div className="flex-shrink-0 w-10 h-10 rounded-full bg-success/20 flex items-center justify-center">
+                <i className="fas fa-shield-alt text-success" />
+            </div>
+            <div className="flex-1 text-sm text-text-secondary leading-relaxed">
+                Both brokers are <strong className="text-text-primary">SEBI-registered</strong> and offer <strong className="text-text-primary">₹0 equity delivery brokerage</strong> — the same fee structure simulated on TraVirt. Your account opening is completely free.
+            </div>
+        </div>
+
+        <p className="text-center text-xs text-muted/50 mt-6 italic">
+            TraVirt earns a referral commission when you open via these links — at no extra cost to you.
+        </p>
+    </div>
+);
 
 // ─── Calculator Tab (formerly BrokerageCalculatorScreen) ─────────────────────
 

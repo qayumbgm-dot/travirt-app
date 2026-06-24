@@ -2,6 +2,7 @@ import { pool } from '../database/pool';
 import { marketService, MarketTick } from '../services/market.service';
 import { findUserById } from '../services/user.service';
 import { sendAlertTriggeredEmail } from '../services/email.service';
+import { sendPushToUser } from '../services/fcm.service';
 
 interface DbActiveAlert {
   id: string;
@@ -73,9 +74,15 @@ export const startAlertWorker = (): void => {
     for (const alert of matching) {
       if (evaluate(tick, alert)) {
         await markTriggered(alert.id).catch(console.error);
+        const direction = alert.operator.startsWith('>') ? 'above' : 'below';
+        const pushBody = `${alert.symbol} hit ₹${tick.ltp.toFixed(2)} — ${alert.property} ${alert.operator} ${alert.value}`;
+        sendPushToUser(alert.user_id, `🔔 Alert: ${alert.symbol}`, pushBody, {
+          alertId: alert.id,
+          symbol: alert.symbol,
+          ltp: String(tick.ltp),
+        }).catch(() => {});
         findUserById(alert.user_id).then((user) => {
           if (!user) return;
-          const direction = alert.operator.startsWith('>') ? 'above' : 'below';
           sendAlertTriggeredEmail(user.email, alert.symbol, tick.ltp, alert.value, direction).catch(() => {});
         }).catch(() => {});
       }

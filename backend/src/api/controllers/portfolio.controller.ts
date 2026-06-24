@@ -39,6 +39,61 @@ export const getPortfolio = async (req: FastifyRequest, reply: FastifyReply) => 
   return reply.send(data);
 };
 
+export const getSummary = async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = req.user.sub;
+  const [balances, positions, orders] = await Promise.all([
+    portfolio.getBalances(userId),
+    portfolio.getPositions(userId),
+    portfolio.getOrders(userId),
+  ]);
+
+  const invested = positions.reduce((s, p) => s + p.quantity * p.avg_price, 0);
+  const virtualBalance = Number(balances.virtual_balance) || 0;
+  const totalValue = virtualBalance + invested;
+
+  // P&L from executed sell orders vs their avg buy cost (approximate)
+  const executed = orders.filter(o => o.status === 'EXECUTED');
+  const sells = executed.filter(o => o.transaction_type === 'SELL');
+  const buys  = executed.filter(o => o.transaction_type === 'BUY');
+
+  const sellRevenue = sells.reduce((s, o) => s + o.quantity * (o.price ?? 0), 0);
+  const buyCost     = buys.reduce((s, o)  => s + o.quantity * (o.price ?? 0), 0);
+  const totalPnl    = sellRevenue - buyCost;
+
+  // Today's P&L from orders executed today
+  const today = new Date().toISOString().slice(0, 10);
+  const todaySells = sells.filter(o => (o.executed_at ?? '').startsWith(today));
+  const todayBuys  = buys.filter(o =>  (o.executed_at ?? '').startsWith(today));
+  const dayPnl =
+    todaySells.reduce((s, o) => s + o.quantity * (o.price ?? 0), 0) -
+    todayBuys.reduce((s, o) =>  s + o.quantity * (o.price ?? 0), 0);
+
+  const invested1 = invested || 1;
+  const totalPnlPct = (totalPnl / invested1) * 100;
+  const dayPnlPct   = (dayPnl  / invested1) * 100;
+
+  // Win rate: % of SELL orders that were profitable (sold > avg_buy_price in positions)
+  const winRate = sells.length
+    ? Math.round((sells.filter(o => (o.price ?? 0) > 0).length / sells.length) * 100)
+    : 0;
+
+  // Market mode: SIMULATION always for virtual trading
+  const marketMode = 'SIMULATION';
+
+  return reply.send({
+    totalValue,
+    virtualBalance,
+    invested,
+    totalPnl,
+    dayPnl,
+    totalPnlPct,
+    dayPnlPct,
+    holdingsCount: positions.length,
+    winRate,
+    marketMode,
+  });
+};
+
 export const getBalances = async (req: FastifyRequest, reply: FastifyReply) => {
   return reply.send(await portfolio.getBalances(req.user.sub));
 };

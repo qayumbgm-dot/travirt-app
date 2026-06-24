@@ -14,6 +14,8 @@ const schema = z.object({
   ALICE_USER_ID:       z.string().optional(),
   ALICE_API_KEY:       z.string().optional(),
   ALICE_ACCESS_TOKEN:  z.string().optional(),
+  // ANT OAuth application ID — shown on the Alice Blue developer portal
+  ALICE_ANT_APP_ID:    z.string().optional(),
   // OAuth2 refresh token — obtained from Alice Blue Keycloak on first login.
   // When set, the server auto-refreshes the access token before it expires so
   // the live WS feed never drops due to a stale JWT.

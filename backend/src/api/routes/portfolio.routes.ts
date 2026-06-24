@@ -9,6 +9,7 @@ export const portfolioRoutes = async (fastify: FastifyInstance) => {
   });
 
   fastify.get('/', auth, ctrl.getPortfolio);
+  fastify.get('/summary', auth, ctrl.getSummary);
   fastify.get('/balances', auth, ctrl.getBalances);
   fastify.get('/positions', auth, ctrl.getPositions);
   fastify.get('/orders', auth, ctrl.getOrders);

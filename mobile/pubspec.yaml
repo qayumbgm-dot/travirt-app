@@ -1,0 +1,123 @@
+name: travirt
+description: TraVirt — Virtual Trading Platform for Android & iOS
+version: 1.0.0+1
+publish_to: none
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # State Management
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Navigation
+  go_router: ^14.2.0
+
+  # HTTP & Networking
+  dio: ^5.4.3
+  pretty_dio_logger: ^1.3.1
+
+  # Dependency Injection
+  get_it: ^7.7.0
+  injectable: ^2.4.2
+
+  # Secure Storage
+  flutter_secure_storage: ^9.2.2
+  shared_preferences: ^2.3.0
+
+  # UI & Animations
+  flutter_animate: ^4.5.0
+  shimmer: ^3.0.0
+  lottie: ^3.1.2
+  cached_network_image: ^3.3.1
+  fl_chart: ^0.68.0
+
+  # Utilities
+  freezed_annotation: ^2.4.1
+  json_annotation: ^4.9.0
+  intl: ^0.19.0
+  equatable: ^2.0.5
+  logger: ^2.3.0
+  connectivity_plus: ^6.0.3
+  package_info_plus: ^8.0.0
+  url_launcher: ^6.3.0
+  haptic_feedback: ^0.5.1+1
+  share_plus: ^10.0.0
+  path_provider: ^2.1.3
+
+  # WebSocket
+  web_socket_channel: ^3.0.1
+
+  # Push Notifications
+  firebase_core: ^3.3.0
+  firebase_messaging: ^15.1.0
+  flutter_local_notifications: ^17.2.2
+
+  # Payments
+  razorpay_flutter: ^1.3.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.1
+  build_runner: ^2.4.11
+  freezed: ^2.5.2
+  json_serializable: ^6.8.0
+  injectable_generator: ^2.6.1
+  riverpod_generator: ^2.4.3
+  mocktail: ^1.0.4
+  golden_toolkit: ^0.15.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/animations/
+    - assets/icons/
+  fonts:
+    - family: Orbitron
+      fonts:
+        - asset: assets/fonts/Orbitron-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Orbitron-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Orbitron-ExtraBold.ttf
+          weight: 800
+    - family: Rajdhani
+      fonts:
+        - asset: assets/fonts/Rajdhani-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Rajdhani-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Rajdhani-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Rajdhani-Bold.ttf
+          weight: 700
+    - family: Exo2
+      fonts:
+        - asset: assets/fonts/Exo2-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Exo2-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Exo2-SemiBold.ttf
+          weight: 600
+
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons/app_icon.png"
+  adaptive_icon_background: "#0D1117"
+  adaptive_icon_foreground: "assets/icons/app_icon_foreground.png"
+  min_sdk_android: 21
+  web:
+    generate: false
+  windows:
+    generate: false
